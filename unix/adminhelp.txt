@@ -1,0 +1,79 @@
+%topic global:MAIN
+FSD Cangjie Server v4.0
+
+Try 'help <command>' to get help on a topic.
+
+Commands available:
+  help        - Show this help
+  status      - Show server status
+  clients     - List connected clients
+  servers     - List connected servers
+  cert        - Manage certificates
+  time        - Show current time
+  log         - Access system logs
+  ping        - Ping a network server
+  route       - Show routing tables
+  connect     - Connect to a server
+  disconnect  - Disconnect from a server
+  weather     - Send weather request
+  reload      - Reload configuration
+  shutdown    - Shutdown server
+
+%topic status:SHOW SERVER STATUS
+Syntax:
+   status
+
+Shows the current server status including:
+- Server ident, name, version
+- Connected clients and servers count
+- Uptime and configuration info
+
+%topic clients:CLIENTS OVERVIEW
+Syntax:
+   clients [filter]
+
+Shows a list of connected clients. If filter is specified,
+only clients matching the filter will be shown.
+
+%topic servers:SERVER OVERVIEW
+Syntax:
+   servers [name]
+
+Shows an overview of connected servers in the network.
+
+%topic time:SHOW CURRENT TIME
+Syntax:
+   time
+
+Displays the current server time.
+
+%topic log:ACCESS SYSTEM LOGS
+Syntax:
+   log [level]
+
+Sets or shows the current log level.
+Levels: 0=DEBUG, 1=INFO, 2=WARNING, 3=ERROR
+
+%topic connect:CONNECT TO A SERVER
+Syntax:
+   connect <hostname>[:port]
+
+Connects the local server to another FSD server.
+
+%topic disconnect:DISCONNECT FROM A SERVER
+Syntax:
+   disconnect <ident>
+
+Disconnects from the specified server.
+
+%topic ping:PING A NETWORK SERVER
+Syntax:
+   ping <serverident>
+
+Sends a PING request to the specified server.
+
+%topic cert:CERTIFICATE CONTROL
+Syntax:
+   cert list
+
+Lists all certificates in the network.
