@@ -1,0 +1,15 @@
+[package]
+  cjc-version = "1.1.0"
+  name = "FSD_Cangjie"
+  organization = ""
+  description = "FSD Flight Simulator Daemon - 飞行模拟多服务器互联系统（仓颉版）"
+  version = "4.0.0"
+  target-dir = ""
+  script-dir = ""
+  output-type = "executable"
+  compile-option = "--output=FSD_Cangjie"
+  override-compile-option = ""
+  link-option = "-l:libcangjie-std-unicode.a"
+  package-configuration = {}
+
+[dependencies]
