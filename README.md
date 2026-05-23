@@ -1,6 +1,6 @@
 # FSD_Cangjie
 
-基于华为**仓颉 (Cangjie)** 编程语言重写的 FSD (Flight Simulator Daemon) 飞行模拟通信服务器。
+基于**华为仓颉 (Cangjie)** 编程语言重写的 FSD (Flight Simulator Daemon) 飞行模拟通信服务器。
 
 原项目为 FSD 2.x (C/C++)，[https://github.com/kuroneko/fsd](https://github.com/kuroneko/fsd) 本作品完整移植协议与功能，支持 ECHO Pilot Client、Swift、EuroScope 等客户端接入。
 
