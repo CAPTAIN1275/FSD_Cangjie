@@ -2,6 +2,7 @@
 
 import std.fs.*
 import std.process.*
+import std.collection.*
 
 var clientInterface: ?ClInterface = None
 var serverInterface: ?ServInterface = None
@@ -15,6 +16,7 @@ public class FsdEngine {
     var prevNotify: Int64; var prevLagCheck: Int64; var prevCertCheck: Int64; var prevWhazzup: Int64
     var prevHeartbeat: Int64
     var prevWindDelta: Int64
+    var voiceSrv: ?VoiceServer
     var timer: Int64; var clientPort: Int32; var serverPort: Int32; var systemPort: Int32
 
     public init(configFile: String) {
@@ -22,12 +24,14 @@ public class FsdEngine {
         this.prevNotify = 0; this.prevLagCheck = 0; this.prevCertCheck = 0; this.prevWhazzup = 0
         this.prevHeartbeat = 0
         this.prevWindDelta = 0
+        this.voiceSrv = None
         this.timer = 0; this.clientPort = DEFAULT_CLIENT_PORT
         this.serverPort = DEFAULT_SERVER_PORT; this.systemPort = DEFAULT_SYSTEM_PORT
 
         dolog(L_INFO, "Booting FSD server v${VERSION}")
         configMan = ConfigManager(configFile); metarManager = MetarManager()
         configure(); initDatabase(); initHttpApi(); createInterfaces(); makeConnections()
+        var vs = VoiceServer(); vs.start(6808); this.voiceSrv = Some(vs)
         dolog(L_INFO, "FSD server is up and running")
         this.prevNotify = mgmtime(); this.prevLagCheck = mgmtime()
         this.timer = mgmtime(); this.prevWhazzup = mgmtime()
