@@ -25,12 +25,17 @@ public class ConfigGroup {
 
 public class ConfigManager {
     var groups: HashMap<String, ConfigGroup>; var filename: String; var prevCheck: Int64
+    var lastContent: String
 
-    public init(filename: String) { this.groups = HashMap<String, ConfigGroup>(); this.filename = filename; this.prevCheck = 0; parseFile() }
+    public init(filename: String) {
+        this.groups = HashMap<String, ConfigGroup>(); this.filename = filename; this.prevCheck = 0; this.lastContent = ""
+        parseFile()
+    }
 
     private func parseFile(): Unit {
-        let content = readFileStr(this.filename)
+        var content = readFileStr(this.filename)
         if (content == "") { return }
+        this.lastContent = content
         var currentGroup: ?String = None
         for (line in splitStr(content, "\n")) {
             let trimmed = rmComment(line).trim()
@@ -67,5 +72,35 @@ public class ConfigManager {
     }
 
     public func getGroup(name: String): ?ConfigGroup { return this.groups.get(name) }
-    public func run(): Int32 { let now = mgmtime(); if ((now - this.prevCheck) > CONFIGINTERVAL) { this.prevCheck = now }; return 0 }
+    public func run(): Int32 {
+        let now = mgmtime()
+        if ((now - this.prevCheck) > CONFIGINTERVAL) {
+            this.prevCheck = now
+            let newContent = readFileStr(this.filename)
+            if (newContent != "" && newContent != this.lastContent) {
+                dolog(L_INFO, "Config file changed, reloading...")
+                this.groups = HashMap<String, ConfigGroup>()
+                this.lastContent = newContent
+                var currentGroup: ?String = None
+                for (line in splitStr(newContent, "\n")) {
+                    let trimmed = rmComment(line).trim()
+                    if (trimmed == "") { continue }
+                    if (trimmed.toRuneArray()[0] == r'[') {
+                        match (trimmed.indexOf(r']')) {
+                            case Some(e) => let n = substr(trimmed, 1, e); this.groups[n] = ConfigGroup(n); currentGroup = n
+                            case None => ()
+                        }
+                        continue
+                    }
+                    match (trimmed.indexOf(r'=')) {
+                        case Some(e) =>
+                            let k = substrTo(trimmed, e).trim(); let v = substrFrom(trimmed, e + 1).trim()
+                            match (currentGroup) { case Some(gn) => match (this.groups.get(gn)) { case Some(g) => g.createEntry(k, v); case None => () }; case None => () }
+                        case None => ()
+                    }
+                }
+            }
+        }
+        return 0
+    }
 }
