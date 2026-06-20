@@ -38,6 +38,7 @@ public class FlightPlan {
     }
 
     public func serialize(): String {
-        return "${aircraft}:${tascruise}:${depAirport}:${actDepTime}:${revision}:${altitude}:${destAirport}:${hrsEnroute}:${minEnroute}:${hrsFuel}:${minFuel}:${altAirport}:${remarks}:${route}"
+        // 原版格式: aircraft:tascruise:depAirport:depTime:actDepTime:altitude:destAirport:hrsEnroute:minEnroute:hrsFuel:minFuel:altAirport:remarks:route
+        return "${aircraft}:${tascruise}:${depAirport}:${depTime}:${actDepTime}:${altitude}:${destAirport}:${hrsEnroute}:${minEnroute}:${hrsFuel}:${minFuel}:${altAirport}:${remarks}:${route}"
     }
 }

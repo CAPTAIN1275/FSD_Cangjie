@@ -14,9 +14,69 @@
 
 ## 作者
 
-**CAPTAIN 1275**  
+**CAPTAIN 1275**
 
 FSD_Cangjie (Flight Simulator Daemon Cangjie) 仓颉版发起人
+
+---
+
+## 性能对比 C 原版
+
+| 指标 | C 原版 (select 单线程) | 仓颉版 (M:N 协程) |
+|------|------------------------|---------------------|
+| **并发模型** | select() 事件循环，单线程 | M:N 轻量线程，多核并行 |
+| **客户端上限** | 受 FD_SETSIZE 限制 (~1024) | 受 ulimit 限制 (65535+) |
+| **消息延迟** | 出队缓存批量发送 | sendTo 直写 socket，零缓冲 |
+| **内存安全** | 手动 malloc/free，越界风险 | 全并发 GC，自动回收 |
+| **CPU 利用** | 单核空转轮询 | 多核 work-stealing 调度 |
+| **阻塞处理** | 一个阻塞拖垮全部 | 协程隔离，互不影响 |
+
+## 相对于 C 原版的改进
+
+| 项目 | C 原版 | 仓颉版 |
+|------|--------|--------|
+| **内存安全** | 手动 malloc/free | 全并发 GC |
+| **字符串处理** | char[] + sprintf，溢出隐患 | String 原生 Unicode |
+| **并发模型** | select() 单线程轮询 | M:N 轻量线程 |
+| **协议解析** | strtok 破坏原字符串 | splitStr 无副作用 |
+| **跨平台** | 两套 Makefile | cjpm 统一构建 |
+| **代码量** | ~5000 行 C | ~2000 行仓颉 |
+
+## 功能实现状态对比 C 原版
+
+### ✅ 已实现
+
+| 功能 | 文件 | 说明 |
+|------|------|------|
+| **客户端协议** | clinterface.cj | #AA/#AP 登录、#TM 消息（GBK/UTF8 透传）、$FP 飞行计划、@/% 位置、#WX 天气请求、$HO 移交、$!! 管理命令 |
+| **服务端间协议** | servinterface.cj | 20 条 FSD 命令（NOTIFY/PING/PONG/SYNC/ADDCLIENT/RMCLIENT/PLAN/PD/AD/KILL 等） |
+| **管理终端** | sysinterface.cj | help/time/quit/pwd/servers/clients/info/connect/ping/say/wall/kill/cert/route/stat/metar/weather/pos/log/distance/range/dump/wp |
+| **WhazzUp 生成** | fsd.cj | 每 2 秒刷新 whazzup.txt（39 字段，含航向 pbh） |
+| **METAR 天气** | metar.cj | 通过 curl 从 metar.vatsim.net 获取，15 分钟缓存 |
+| **MySQL 数据库** | mysqldb.cj | 用户认证、飞行计划 CRUD、bcrypt 密码验证（PHP 中转） |
+| **证书管理** | certificate.cj | cert.txt 加载、bcrypt/明文密码验证、等级系统 |
+| **HTTP API** | httpapi.cj | 完整 REST 服务（GET /api/status、POST/GET/DELETE /api/flightplan）、CORS 支持 |
+| **洪水防护** | netbase.cj | 每秒字节量限制 |
+| **配置解析** | config.cj | fsd.conf 解析 |
+| **网络层** | netbase.cj | TCP 监听/协程处理/读写缓冲 |
+| **文本编码** | — | GBK 原始字节透传 + UTF-8 自动识别 |
+| **连接统计** | clinterface.cj | stats.txt 记录，.stats 命令查询 |
+
+### ❌ 当前版本暂未实现
+
+| 功能 | 原因 |
+|------|------|
+| **IP 白名单 (ALLOW)** | 需要 `TcpSocket.getpeername()`，Cangjie 1.2.0+ 已有但本地是 1.1.0 |
+| **GUARD 重连保护** | 同上（基于 IP 的防暴力重连） |
+| **RBL IP 认证** | 同上，且 mcdu.com RBL 服务已下线 |
+
+### 📌 无需移植
+
+| 功能 | 原因 |
+|------|------|
+| **消息队列 (msgqueue)** | Cangjie M:N 协程天然异步，无需批量投递队列 |
+| **统计变量 (manage)** | 使用 Cangjie 局部变量+日志代替 |
+| **Windows 服务模式** | 仓颉版以普通进程运行，nohup/系统服务管理 |
 
 ---
 
@@ -49,11 +109,31 @@ cjpm run
 
 ```bash
 telnet localhost 3010
-> servers    # 查看在线服务器
-> clients    # 查看在线客户端
-> kill <cid> # 踢出用户
-> cert       # 刷新证书
-> help       # 完整命令列表
+> servers       # 查看在线服务器
+> clients       # 查看在线客户端
+> kill <cid>    # 踢出用户
+> cert          # 证书管理
+> metar ZGGG    # 查询 METAR 天气
+> distance CSN1 CSN2  # 计算两机组距离
+> range CSN1    # 查看通信范围
+> dump          # 调试转储
+> help          # 完整命令列表
+```
+
+### HTTP API
+
+```bash
+# 服务器状态
+curl http://localhost:8080/api/status
+
+# 提交飞行计划
+curl -X POST "http://localhost:8080/api/flightplan?callsign=CSN1275&cid=1001&fp_data=FP_DATA"
+
+# 查询飞行计划
+curl "http://localhost:8080/api/flightplan?callsign=CSN1275"
+
+# 删除飞行计划
+curl -X DELETE "http://localhost:8080/api/flightplan?callsign=CSN1275"
 ```
 
 ---
@@ -111,4 +191,4 @@ export LD_LIBRARY_PATH=$CANGJIE_HOME/runtime/lib/linux_x86_64_cjnative:$LD_LIBRA
 
 ---
 
-**FSD_Cangjie v4.0.0 — CAPTAIN 1275**
+**FSD_Cangjie v4.1.0 — CAPTAIN 1275**

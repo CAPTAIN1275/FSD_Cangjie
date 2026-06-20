@@ -1,10 +1,19 @@
-package FSD_Cangjie
+﻿package FSD_Cangjie
 
 import std.net.*
 import std.collection.*
 
 func sendTo(user: NetUser, data: String): Unit {
-    try { user.socket.write(data.toArray()) } catch (e: Exception) {}
+    let bytes = data.toArray()
+    // 仅对 #TM 消息打日志，对比收发字节
+    if (data.startsWith("#TM")) {
+        var logStr = "SEND #TM (${bytes.size} bytes):"
+        for (i in 0..bytes.size) {
+            if (i < 12) { logStr += " ${Int64(bytes[i])}" }
+        }
+        dolog(L_INFO, logStr)
+    }
+    try { user.socket.write(bytes) } catch (e: Exception) {}
 }
 
 func toBuf(s: String): Array<UInt8> { return s.toArray() }
@@ -51,9 +60,11 @@ func byteStr(b: UInt8): String {
 public open class NetInterface {
     var port: Int32; var name: String; var desc: String; var runFlag: Bool
     var users: ArrayList<NetUser>
+    var floodLimit: Int32; var outBufLimit: Int32
     public init(port: Int32, name: String, description: String) {
         this.port = port; this.name = name; this.desc = description
         this.runFlag = false; this.users = ArrayList<NetUser>()
+        this.floodLimit = 100000; this.outBufLimit = 1000000
     }
     public open func createUser(socket: TcpSocket): NetUser { return NetUser(socket) }
     public open func run(): Int32 { return 0 }
@@ -62,13 +73,13 @@ public open class NetInterface {
         spawn { acceptLoop() }
     }
     public open func stop(): Unit { this.runFlag = false }
-    public func setFlood(n: Int32): Unit {}
-    public func setOutBufLimit(n: Int32): Unit {}
+    public func setFlood(_n: Int32): Unit { this.floodLimit = _n }
+    public func setOutBufLimit(_n: Int32): Unit { this.outBufLimit = _n }
 
     private func acceptLoop(): Unit {
         try {
             var ss = TcpServerSocket(bindAt: UInt16(this.port))
-            try { ss.bind() } catch (e: Exception) {}
+            ss.bind()
             println("[${this.desc}] port=${this.port}")
             while (this.runFlag) {
                 try {
@@ -94,20 +105,54 @@ public open class NetInterface {
             try {
                 let n = u.socket.read(buf)
                 if (n <= 0) { break }
+                // 洪水防护
+                let now = mgmtime()
+                if (now - u.floodTime > 1) {
+                    u.floodBytes = 0; u.floodTime = now
+                }
+                u.floodBytes += Int64(n)
+                if (u.floodBytes > Int64(this.floodLimit) && this.floodLimit > 0) {
+                    dolog(L_WARNING, "Flood detected from user, closing")
+                    u.shouldClose = true; break
+                }
                 for (i in 0..n) {
                     let b = buf[i]
                     if (b == UInt8(10)) {
-                        let rs = u.lineBuf.toRuneArray()
-                        if (rs.size > 0 && rs[Int64(rs.size) - 1] == r'\r') {
-                            u.lineBuf = substr(u.lineBuf, 0, Int64(rs.size) - 1)
+                        if (u.lineBytes.size > 0) {
+                            // 去掉末尾 \r
+                            let last = u.lineBytes.size - 1
+                            if (last >= 0 && u.lineBytes[last] == UInt8(13)) {
+                                u.lineBytes.remove(last..last + 1)
+                            }
+                            // 先尝试 UTF-8 解码
+                            try {
+                                let line = String.fromUtf8(u.lineBytes.toArray())
+                                u.lineBuf = line
+                                if (u.lineBuf != "") {
+                                    // #TM/#SB 消息：同时走原始字节路径（保持原始编码透传）
+                                    let b0 = u.lineBytes[0]; let b1 = u.lineBytes[1]; let b2 = u.lineBytes[2]
+                                    if (u.lineBytes.size >= 3 &&
+                                        (b0 == UInt8(35) && b1 == UInt8(84) && b2 == UInt8(77)) ||
+                                        (b0 == UInt8(35) && b1 == UInt8(83) && b2 == UInt8(66))) {
+                                        u.handleRawLine(u.lineBytes)
+                                    }
+                                    u.handleLine(u.lineBuf)
+                                }
+                                u.lineBuf = ""
+                            } catch (_: Exception) {
+                                // 非 UTF-8 编码（如 GBK 中文），走原始字节处理
+                                u.handleRawLine(u.lineBytes)
+                            }
                         }
-                        if (u.lineBuf != "") { u.handleLine(u.lineBuf) }
-                        u.lineBuf = ""
+                        u.lineBytes.clear()
                     } else if (b != UInt8(13)) {
-                        u.lineBuf += byteStr(b)
+                        u.lineBytes.add(b)
                     }
                 }
-            } catch (e: Exception) { break }
+            } catch (e: Exception) {
+                dolog(L_ERR, "[BYTES] serve loop: ${e}")
+                break
+            }
         }
         u.onDisconnect()
     }
@@ -115,9 +160,17 @@ public open class NetInterface {
 
 public open class NetUser {
     var socket: TcpSocket; var alive: Int64; var outStr: String; var lineBuf: String
-    var shouldClose: Bool; var delayClose: Bool
-    public init(s: TcpSocket) { this.socket = s; this.alive = mgmtime(); this.outStr = ""; this.lineBuf = ""; this.shouldClose = false; this.delayClose = false }
-    public open func handleLine(l: String): Unit {}
+    var lineBytes: ArrayList<UInt8>; var shouldClose: Bool; var delayClose: Bool
+    var floodBytes: Int64; var floodTime: Int64
+    public init(s: TcpSocket) {
+        this.socket = s; this.alive = mgmtime(); this.outStr = ""; this.lineBuf = ""
+        this.lineBytes = ArrayList<UInt8>()
+        this.shouldClose = false; this.delayClose = false
+        this.floodBytes = 0; this.floodTime = mgmtime()
+    }
+    public open func handleLine(_l: String): Unit {}
+    public open func handleRawLine(_b: ArrayList<UInt8>): Unit {}
     public open func onConnect(): Unit {}
     public open func onDisconnect(): Unit {}
 }
+

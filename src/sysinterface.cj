@@ -24,20 +24,23 @@ public class SysInterface <: NetInterface {
             user.outStr += "Available commands:\r\n"
             user.outStr += "  help servers clients info time route cert\r\n"
             user.outStr += "  connect disconnect ping stat say wall\r\n"
-            user.outStr += "  pwd quit metar weather\r\n"
+            user.outStr += "  pwd quit metar weather pos log kill\r\n"
+            user.outStr += "  distance range dump wp\r\n"
         }
         else if (cmd == "time") { user.outStr += "${DateTime.now().format("yyyy-MM-dd HH:mm:ss")} local\r\n" }
         else if (cmd == "quit") { user.socket.close() }
         else if (cmd == "pwd") {
             if (args.size < 2) { user.outStr += "Usage: pwd <password>\r\n"; return }
+            var authed = false
             if (let Some(cm) <- configMan) {
                 if (let Some(g) <- cm.getGroup("system")) {
                     if (let Some(e) <- g.getEntry("password")) {
-                        if (e.getData() == args[1]) { user.isPrivileged = true; user.outStr += "Password correct\r\n" }
-                        else { user.outStr += "Password incorrect\r\n" }
-                    } else { user.isPrivileged = true }
-                } else { user.isPrivileged = true }
-            } else { user.isPrivileged = true }
+                        if (e.getData() == args[1]) { authed = true }
+                    }
+                }
+            }
+            if (authed) { user.isPrivileged = true; user.outStr += "Password correct\r\n" }
+            if (!authed) { user.outStr += "Password incorrect\r\n" }
         }
         // ---- 需要认证 ----
         else if (!user.isPrivileged) { user.outStr += "Not authorized. Use 'pwd <password>'.\r\n" }
@@ -139,6 +142,107 @@ public class SysInterface <: NetInterface {
                 user.outStr += "${padRight(s.ident, 10)} ${dest}\r\n"
                 sv = s.next
             ; case None => break }}
+        }
+        else if (cmd == "stat") {
+            user.outStr += "Clients: ${clientCount()}  Servers: ${serverCount()}  Certs: ${certCount()}\r\n"
+            user.outStr += "Memory: N/A\r\n"
+        }
+        else if (cmd == "metar" || cmd == "weather") {
+            if (args.size < 2) { user.outStr = user.outStr + "Usage: metar <icao>\r\n"; return }
+            let icao = args[1].toUpper()
+            match (metarManager) {
+                case Some(mm) =>
+                    user.outStr = user.outStr + "Fetching METAR for ${icao}...\r\n"
+                    let data = mm.fetchMetarSync(icao)
+                    user.outStr = user.outStr + "${icao}: ${data}\r\n"
+                case None => user.outStr = user.outStr + "METAR service unavailable\r\n"
+            }
+        }
+        else if (cmd == "pos") {
+            if (args.size < 2) { user.outStr += "Usage: pos <callsign>\r\n"; return }
+            match (getClient(args[1])) {
+                case Some(cl) =>
+                    user.outStr += "${cl.callsign}: lat=${cl.lat} lon=${cl.lon} alt=${cl.altitude} hdg=N/A spd=${cl.groundspeed}\r\n"
+                case None => user.outStr += "Client '${args[1]}' not found\r\n"
+            }
+        }
+        else if (cmd == "log") {
+            var lines: Int64 = 20
+            if (args.size > 1) { lines = Int64(parseInt32(args[1])) }
+            if (lines > 200) { lines = 200 }
+            user.outStr += "Log: see fsd.log on server (tail -n ${lines} fsd.log)\r\n"
+        }
+        else if (cmd == "distance") {
+            if (args.size < 3) { user.outStr += "Usage: distance <callsign1> <callsign2>\r\n"; return }
+            match (getClient(args[1])) {
+                case Some(c1) =>
+                    match (getClient(args[2])) {
+                        case Some(c2) =>
+                            let d = c1.distanceNM(c2)
+                            if (d < 0.0) {
+                                user.outStr += "${args[1]}: location unknown\r\n"
+                            } else {
+                                user.outStr += "Distance: ${d.toString()} NM\r\n"
+                            }
+                        case None => user.outStr += "Client '${args[2]}' not found\r\n"
+                    }
+                case None => user.outStr += "Client '${args[1]}' not found\r\n"
+            }
+        }
+        else if (cmd == "range") {
+            if (args.size < 2) { user.outStr += "Usage: range <callsign>\r\n"; return }
+            match (getClient(args[1])) {
+                case Some(c) =>
+                    let r = c.getrange()
+                    user.outStr += "${args[1]} range: ${r} NM\r\n"
+                case None => user.outStr += "Client '${args[1]}' not found\r\n"
+            }
+        }
+        else if (cmd == "dump") {
+            user.outStr += "=== FSD Server Dump ===\r\n"
+            user.outStr += "Version: ${VERSION}\r\n"
+            user.outStr += "Clients: ${clientCount()}  Servers: ${serverCount()}  Certs: ${certCount()}\r\n"
+            user.outStr += "--- All Clients ---\r\n"
+            var cl = rootClient
+            while (true) { match (cl) { case Some(c) =>
+                let locId = match (c.location) { case Some(l) => l.ident; case None => "?" }
+                let typeStr = if (c.isAtc()) { "ATC" } else { "PILOT" }
+                user.outStr = user.outStr + "  ${padRight(c.callsign, 12)} ${padRight(typeStr, 6)} lat=${c.lat} lon=${c.lon} alt=${c.altitude} spd=${c.groundspeed} at=${locId}\r\n"
+                cl = c.next
+            ; case None => break }}
+            user.outStr += "--- METAR Cache ---\r\n"
+            match (metarManager) {
+                case Some(mm) => user.outStr += "  See 'wp list' for weather profiles\r\n"
+                case None => user.outStr += "  METAR disabled\r\n"
+            }
+        }
+        else if (cmd == "wp") {
+            match (metarManager) {
+                case Some(mm) =>
+                    if (args.size < 2 || args[1] == "list") {
+                        user.outStr += "Weather profiles:\r\n"
+                        user.outStr += "  (use 'metar <icao>' to fetch)\r\n"
+                    } else {
+                        user.outStr += "Usage: wp [list]\r\n"
+                    }
+                case None => user.outStr += "METAR service unavailable\r\n"
+            }
+        }
+        else if (cmd == "shutdown") {
+            if (!user.isPrivileged) { user.outStr += "Not authorized.\r\n"; return }
+            user.outStr += "Shutting down FSD...\r\n"
+            user.socket.close()
+            // 给所有客户端发 #DA/#DP 断开协议
+            var cl = rootClient
+            while (true) { match (cl) {
+                case Some(c) =>
+                    clientInterface?.sendRemoveClient(c)
+                    dolog(L_INFO, "Sending disconnect to ${c.callsign}")
+                    cl = c.next
+                case None => break
+            }}
+            sleep(100 * Duration.millisecond)
+            fsdEngine?.stop()
         }
         else { user.outStr += "Unknown command: ${cmd}\r\n" }
     }

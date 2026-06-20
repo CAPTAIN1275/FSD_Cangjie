@@ -13,6 +13,32 @@ extend String {
         return None
     }
 
+    func toUpper(): String {
+        let chars = this.toRuneArray()
+        var sb = StringBuilder()
+        for (ch in chars) {
+            if (ch >= r'a' && ch <= r'z') {
+                // 小写转大写：'a' - 'A' = 32
+                if (ch == r'a') { sb.append(r'A') } else if (ch == r'b') { sb.append(r'B') }
+                else if (ch == r'c') { sb.append(r'C') } else if (ch == r'd') { sb.append(r'D') }
+                else if (ch == r'e') { sb.append(r'E') } else if (ch == r'f') { sb.append(r'F') }
+                else if (ch == r'g') { sb.append(r'G') } else if (ch == r'h') { sb.append(r'H') }
+                else if (ch == r'i') { sb.append(r'I') } else if (ch == r'j') { sb.append(r'J') }
+                else if (ch == r'k') { sb.append(r'K') } else if (ch == r'l') { sb.append(r'L') }
+                else if (ch == r'm') { sb.append(r'M') } else if (ch == r'n') { sb.append(r'N') }
+                else if (ch == r'o') { sb.append(r'O') } else if (ch == r'p') { sb.append(r'P') }
+                else if (ch == r'q') { sb.append(r'Q') } else if (ch == r'r') { sb.append(r'R') }
+                else if (ch == r's') { sb.append(r'S') } else if (ch == r't') { sb.append(r'T') }
+                else if (ch == r'u') { sb.append(r'U') } else if (ch == r'v') { sb.append(r'V') }
+                else if (ch == r'w') { sb.append(r'W') } else if (ch == r'x') { sb.append(r'X') }
+                else if (ch == r'y') { sb.append(r'Y') } else if (ch == r'z') { sb.append(r'Z') }
+            } else {
+                sb.append(ch)
+            }
+        }
+        return sb.toString()
+    }
+
     func trim(): String {
         let chars = this.toRuneArray()
         var start: Int64 = 0; var end: Int64 = chars.size

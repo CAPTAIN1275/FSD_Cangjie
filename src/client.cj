@@ -14,9 +14,9 @@ public class Client {
     var next: ?Client = None; var prev: ?Client = None
 
     public init(callsign: String, cid: String, realname: String, password: String,
-                `type`: Int32, rating: Int32, protocol: Int32) {
+                _type: Int32, rating: Int32, protocol: Int32) {
         this.callsign = callsign; this.cid = cid; this.realname = realname
-        this.password = password; this.`type` = `type`; this.rating = rating
+        this.password = password; this.`type` = _type; this.rating = rating
         this.protocol = protocol; this.lat = 0.0; this.lon = 0.0
         this.altitude = 0; this.groundspeed = 0; this.pbh = 0
         this.transponder = 0; this.frequency = 0; this.facilitytype = 0
@@ -28,6 +28,17 @@ public class Client {
     public func touch(): Unit { this.alive = mgmtime() }
     public func isAtc(): Bool { return this.`type` == CLIENT_ATC }
     public func isPilot(): Bool { return this.`type` == CLIENT_PILOT }
+    public func getrange(): Int32 {
+        if (this.isAtc()) { return this.visualrange }
+        // Pilot 通信范围基于等级
+        if (this.rating >= LEV_CTLFLN) { return 200 }
+        if (this.rating >= LEV_APPTRAIN) { return 150 }
+        if (this.rating >= LEV_CERTPILOT) { return 100 }
+        return 50
+    }
+    public func distanceNM(other: Client): Float64 {
+        return calcNMDistance(this.lat, this.lon, other.lat, other.lon)
+    }
 }
 
 func addClient(c: Client): Unit {

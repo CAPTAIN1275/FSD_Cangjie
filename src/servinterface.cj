@@ -1,5 +1,5 @@
-// servinterface.cj — FSD 服务器间接口（完整 20 条协议命令 + 路由）
-// 参考 C 原版: servuser.cpp / servinterface.cpp
+﻿// servinterface.cj �?FSD 服务器间接口（完�?20 条协议命�?+ 路由�?
+// 参�?C 原版: servuser.cpp / servinterface.cpp
 
 package FSD_Cangjie
 
@@ -20,14 +20,14 @@ public class ServInterface <: NetInterface {
     public override func createUser(socket: TcpSocket): NetUser { return ServUser(socket, this) }
 
     // ---- 主动连接 ----
-    public func addUser(hostname: String, port: Int32, ident: ?String): Int32 {
+    public func addUser(hostname: String, port: Int32, _ident: ?String): Int32 {
         dolog(L_INFO, "Connecting to server ${hostname}:${port}")
-        // 异步连接由 NetUser/TcpSocket 处理，这里预留
+        // 异步连接�?NetUser/TcpSocket 处理，这里预�?
         return 1
     }
     public func allow(ip: String): Unit { this.allowList.add(ip) }
 
-    // ---- 协议发送 ----
+    // ---- 协议发�?----
     public func sendServerNotify(dest: String, server: Server, exclude: ?Server): Unit {
         assembleAndSend(dest, CMD_NOTIFY, "0:${server.ident}:${server.name}:${server.email}:${server.hostname}:${server.version}:${server.flags}:${server.location}", exclude)
     }
@@ -48,7 +48,7 @@ public class ServInterface <: NetInterface {
         let locIdent = match (client.location) { case Some(s) => s.ident; case None => "" }
         let buf = "${client.cid}:${locIdent}:${client.callsign}:${client.`type`}:${client.rating}:${client.protocol}:${client.realname}:0"
         assembleAndSend(dest, CMD_ADDCLIENT, buf, exclude)
-        // 本地投递给客户端
+        // 本地投递给客户�?
         if (client.isAtc()) { clientInterface?.sendAddA(client) }
         else { clientInterface?.sendAddP(client) }
     }
@@ -74,7 +74,8 @@ public class ServInterface <: NetInterface {
         }
     }
     public func sendCert(dest: String, mode: Int32, cert: Certificate, exclude: ?Server): Unit {
-        let buf = "${mode}:${cert.cid}:${cert.password}:${cert.level}:${cert.created}:${cert.serverIdent}"
+        // 注意：不发送密码明文，仅发送元数据
+        let buf = "${mode}:${cert.cid}::${cert.level}:${cert.created}:${cert.serverIdent}"
         assembleAndSend(dest, CMD_CERT, buf, exclude)
     }
     public func sendMulticast(srcCallsign: String, dest: String, msg: String, cmd: Int32): Unit {
@@ -92,7 +93,7 @@ public class ServInterface <: NetInterface {
         this.packetCount = 0
     }
 
-    // ---- 核心：组装 + 广播/路由发送 ----
+    // ---- 核心：组�?+ 广播/路由发�?----
     private func assembleAndSend(dest: String, cmd: Int32, data: String, exclude: ?Server): Unit {
         this.packetCount += 1
         if (this.packetCount < 0 || this.packetCount > 2000000000) { sendReset(); return }
@@ -107,7 +108,7 @@ public class ServInterface <: NetInterface {
         }
     }
 
-    // ---- 命令名称表（public 供 ServUser 使用）----
+    // ---- 命令名称表（public �?ServUser 使用�?---
     public let cmdnames: Array<String> = [
         "NOTIFY", "REQMETAR", "PING", "PONG", "SYNC", "LINKDOWN", "NOWX",
         "ADDCLIENT", "RMCLIENT", "PLAN", "PD", "AD", "ADDCERT", "MC",
@@ -116,7 +117,7 @@ public class ServInterface <: NetInterface {
 }
 
 // ============================================================
-// ServUser — 服务器间连接的对端
+// ServUser �?服务器间连接的对�?
 // ============================================================
 
 public class ServUser <: NetUser {
@@ -134,7 +135,7 @@ public class ServUser <: NetUser {
         sendFeed()
     }
 
-    // feed — 向新连接的对端同步全量数据
+    // feed �?向新连接的对端同步全量数�?
     private func sendFeed(): Unit {
         // 发送所有已知服务器
         var sv = rootServer
@@ -149,7 +150,7 @@ public class ServUser <: NetUser {
             match (c.plan) { case Some(_) => this.iface.sendPlan("*", c, None); case None => () }
             cl = c.next
         ; case None => break }}
-        // 发送所有证书
+        // 发送所有证�?
         var cert = rootCert
         while (true) { match (cert) { case Some(c) =>
             this.iface.sendCert("*", CERT_ADD, c, None)
@@ -178,7 +179,7 @@ public class ServUser <: NetUser {
         if (trimmed == "" || (trimmed.toRuneArray().size > 0 && trimmed.toRuneArray()[0] == r'#')) { return }
         this.clientOk = true
         let parts = splitStr(trimmed, ":")
-        if (parts.size < 6) { return }  // 最小: CMD:DEST:FROM:FLAG:PC:HOPS
+        if (parts.size < 6) { return }  // 最�? CMD:DEST:FROM:FLAG:PC:HOPS
 
         let cmdName = parts[0]
         let dest = parts[1]
@@ -186,10 +187,10 @@ public class ServUser <: NetUser {
         let flagAndPc = parts[3]  // B12345 or U12345
         let hops = parseInt32(parts[4])
 
-        if (hops > MAXHOPS) { return }  // 防环路
+        if (hops > MAXHOPS) { return }  // 防环�?
         let fromSvr = getServer(from)
         match (fromSvr) { case Some(s) => s.touch(); case None => () }
-        // 检查是否自己发的（fromSvr == myServer）
+        // 检查是否自己发的（fromSvr == myServer�?
         var fromIdent = ""; var myIdent = ""
         if (let Some(fs) <- fromSvr) { fromIdent = fs.ident }
         if (let Some(ms) <- myServer) { myIdent = ms.ident }
@@ -199,14 +200,20 @@ public class ServUser <: NetUser {
         var data = ""
         for (i in 5..parts.size) { if (data != "") { data += ":" }; data += parts[i] }
 
+        // 首次收到 NOTIFY 时记录对端服务器标识
+        if (cmdName == "NOTIFY" && this.peerIdent == "") {
+            let parts2 = splitStr(data, ":")
+            if (parts2.size >= 2) { this.peerIdent = parts2[1] }
+        }
+
         // 查找命令索引
         var cmd: Int32 = -1
         for (idx in 0..iface.cmdnames.size) { if (iface.cmdnames[Int64(idx)] == cmdName) { cmd = Int32(idx); break } }
         if (cmd == -1) { return }
 
-        // 本地投递检查
+        // 本地投递检�?
         if (!needLocal(dest)) {
-            // 仅转发，不本地处理
+            // 仅转发，不本地处�?
             forwardToOthers(trimmed, dest, fromSvr)
             return
         }
@@ -223,10 +230,29 @@ public class ServUser <: NetUser {
     }
 
     private func forwardToOthers(line: String, dest: String, fromSvr: ?Server): Unit {
-        // 路由：如果知道最短路径，发单播；否则广播
+        // 路由：查找目标客户端所在的服务器
+        var targetIdent: ?String = None
+        if (!dest.startsWith("*") && !dest.startsWith("@")) {
+            // 本地客户端不在本地 且 已知位置 → 路由到对应服务器
+            match (getClient(dest)) {
+                case Some(cl) =>
+                    match (cl.location) {
+                        case Some(loc) => if (loc.ident != (myServer?.ident ?? "")) { targetIdent = loc.ident }
+                        case None => ()
+                    }
+                case None => ()
+            }
+        }
+        // 发送到匹配的服务器连接
         for (u in this.iface.users) {
             match (u) {
-                case su: ServUser => su.outStr += line + "\r\n"
+                case su: ServUser =>
+                    var shouldSend = true
+                    match (targetIdent) {
+                        case Some(ti) => shouldSend = (su.peerIdent == ti)
+                        case None => ()
+                    }
+                    if (shouldSend) { su.outStr += line + "\r\n" }
                 case _ => ()
             }
         }
@@ -366,11 +392,13 @@ public class ServUser <: NetUser {
             match (fromSvr) { case Some(s) => s.packetCount = 0; case None => () }
             return true
         }
-        // WEATHER, METAR, NOWX, ADDWPROF, DELWPROF 暂不实现（依赖 MetarManager）
+        // WEATHER, METAR, NOWX, ADDWPROF, DELWPROF 暂不实现（依�?MetarManager�?
         return true
     }
 
-    private func isRouted(s: Server): Bool { return false }
+    private func isRouted(_s: Server): Bool { return false }
 }
 
-// clLocal 定义在 fsd.cj，此处不重复
+// clLocal 定义�?fsd.cj，此处不重复
+
+

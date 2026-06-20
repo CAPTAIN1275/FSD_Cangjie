@@ -1,21 +1,25 @@
-package FSD_Cangjie
+﻿package FSD_Cangjie
 
 import std.fs.*
+import std.process.*
 
 var clientInterface: ?ClInterface = None
 var serverInterface: ?ServInterface = None
 var systemInterface: ?SysInterface = None
 var configMan: ?ConfigManager = None
 var metarManager: ?MetarManager = None
+var fsdEngine: ?FsdEngine = None
 
 public class FsdEngine {
     var certFile: ?String; var whazzupFile: ?String
     var prevNotify: Int64; var prevLagCheck: Int64; var prevCertCheck: Int64; var prevWhazzup: Int64
+    var prevHeartbeat: Int64
     var timer: Int64; var clientPort: Int32; var serverPort: Int32; var systemPort: Int32
 
     public init(configFile: String) {
         this.certFile = None; this.whazzupFile = None
         this.prevNotify = 0; this.prevLagCheck = 0; this.prevCertCheck = 0; this.prevWhazzup = 0
+        this.prevHeartbeat = 0
         this.timer = 0; this.clientPort = DEFAULT_CLIENT_PORT
         this.serverPort = DEFAULT_SERVER_PORT; this.systemPort = DEFAULT_SYSTEM_PORT
 
@@ -25,6 +29,7 @@ public class FsdEngine {
         dolog(L_INFO, "FSD server is up and running")
         this.prevNotify = mgmtime(); this.prevLagCheck = mgmtime()
         this.timer = mgmtime(); this.prevWhazzup = mgmtime()
+        this.prevHeartbeat = mgmtime()
     }
 
     public func configure(): Unit {
@@ -59,7 +64,33 @@ public class FsdEngine {
         }
     }
 
-    public func initDatabase(): Unit {}
+    public func initDatabase(): Unit {
+        match (configMan) { case Some(cm) => match (cm.getGroup("database")) {
+            case Some(g) =>
+                let host = match (g.getEntry("host")) { case Some(e) => e.getData(); case None => "localhost" }
+                let user = match (g.getEntry("user")) { case Some(e) => e.getData(); case None => "root" }
+                let password = match (g.getEntry("password")) { case Some(e) => e.getData(); case None => "" }
+                let name = match (g.getEntry("name")) { case Some(e) => e.getData(); case None => "飞控" }
+                var port: Int32 = 3306
+                match (g.getEntry("port")) { case Some(e) => port = Int32(e.getInt()); case None => () }
+                let tu = match (g.getEntry("table_users")) { case Some(e) => e.getData(); case None => "useraccount" }
+                let tf = match (g.getEntry("table_flightplans")) { case Some(e) => e.getData(); case None => "flightplans" }
+                let cuc = match (g.getEntry("col_user_callsign")) { case Some(e) => e.getData(); case None => "callsign" }
+                let cup = match (g.getEntry("col_user_password")) { case Some(e) => e.getData(); case None => "password" }
+                let cupr = match (g.getEntry("col_user_permission")) { case Some(e) => e.getData(); case None => "permission" }
+                let fpc = match (g.getEntry("col_fp_callsign")) { case Some(e) => e.getData(); case None => "callsign" }
+                let fpid = match (g.getEntry("col_fp_cid")) { case Some(e) => e.getData(); case None => "cid" }
+                let fpda = match (g.getEntry("col_fp_data")) { case Some(e) => e.getData(); case None => "fp_data" }
+                let db = MysqlDB(host, user, password, name, port, tu, tf, cuc, cup, cupr, fpc, fpid, fpda)
+                if (db.connect()) {
+                    db.loadCertificates()
+                } else {
+                    dolog(L_INFO, "MySQL unavailable, using cert.txt only")
+                }
+                gMysql = db
+            case None => dolog(L_INFO, "No [database] config, using cert.txt only")
+        }; case None => () }
+    }
 
     public func initHttpApi(): Unit {
         match (configMan) { case Some(cm) => match (cm.getGroup("httpapi")) {
@@ -142,6 +173,21 @@ public class FsdEngine {
         if ((now - this.prevLagCheck) > LAGCHECK) { serverInterface?.sendPing("*", "-1 ${now}"); this.prevLagCheck = now }
         if ((now - this.prevCertCheck) > CERTFILECHECK) { readCert(); this.prevCertCheck = now }
         if ((now - this.prevWhazzup) >= WHAZZUPCHECK) { writeWhazzUp(); this.prevWhazzup = now }
+        if ((now - this.prevHeartbeat) >= 3600) {
+            this.prevHeartbeat = now
+            var clientCount: Int64 = 0
+            var cur = rootClient
+            while (true) { match (cur) { case Some(c) => clientCount += 1; cur = c.next; case None => break } }
+            match (myServer) {
+                case Some(s) =>
+                    let url = "https://system.ldpfly.cn/api/fsd_ping.php?host=${s.hostname}&clients=${clientCount}"
+                    try {
+                        let (code, _, _) = executeWithOutput("curl", ["-s", "--connect-timeout", "5", "--max-time", "10", url])
+                        if (code != 0) { dolog(L_WARNING, "Heartbeat failed: ${code}") }
+                    } catch (e: Exception) { dolog(L_WARNING, "Heartbeat error: ${e}") }
+                case None => ()
+            }
+        }
         checkServerTimeouts(now); checkClientTimeouts(now)
     }
 

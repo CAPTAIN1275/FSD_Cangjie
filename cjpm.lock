@@ -1,3 +1,4 @@
 version = 0
 
 [requires]
+  mysql = {git = "https://gitcode.com/service/cangjie-mysql-driver.git", commitId = "84571646ef0116ca4d62a4df38c5b6649ed2549b", branch = "main"}
