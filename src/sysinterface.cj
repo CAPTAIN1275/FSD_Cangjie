@@ -79,8 +79,22 @@ public class SysInterface <: NetInterface {
             }
         }
         else if (cmd == "disconnect") {
-            if (args.size < 2) { user.outStr += "Usage: disconnect <fd>\r\n"; return }
-            user.outStr += "Disconnected\r\n"
+            if (args.size < 2) { user.outStr += "Usage: disconnect <fd|ident>\r\n"; return }
+            let target = args[1]
+            var found = false
+            var su = rootServer
+            while (true) { match (su) {
+                case Some(s) =>
+                    if (s.ident == target) {
+                        found = true
+                        dolog(L_INFO, "Admin disconnect: ${s.ident}")
+                        removeServer(s)
+                        user.outStr += "Disconnected ${s.ident}\r\n"
+                    }
+                    su = s.next
+                case None => break
+            }}
+            if (!found) { user.outStr += "No such server: ${target}\r\n" }
         }
         else if (cmd == "ping") {
             if (args.size < 2) { user.outStr += "Usage: ping <ident>\r\n"; return }
@@ -167,10 +181,16 @@ public class SysInterface <: NetInterface {
             }
         }
         else if (cmd == "log") {
-            var lines: Int64 = 20
-            if (args.size > 1) { lines = Int64(parseInt32(args[1])) }
-            if (lines > 200) { lines = 200 }
-            user.outStr += "Log: see fsd.log on server (tail -n ${lines} fsd.log)\r\n"
+            if (args.size >= 2) {
+                let level = args[1].toUpper()
+                if (level == "DEBUG") { currentLogLevel = L_DEBUG; user.outStr += "Log level set to DEBUG\r\n" }
+                else if (level == "INFO") { currentLogLevel = L_INFO; user.outStr += "Log level set to INFO\r\n" }
+                else if (level == "WARN" || level == "WARNING") { currentLogLevel = L_WARNING; user.outStr += "Log level set to WARNING\r\n" }
+                else if (level == "ERR" || level == "ERROR") { currentLogLevel = L_ERR; user.outStr += "Log level set to ERROR\r\n" }
+                else { user.outStr += "Usage: log <DEBUG|INFO|WARN|ERR>\r\n" }
+            } else {
+                user.outStr += "Current log level: ${currentLogLevel} (0=DEBUG 1=INFO 2=WARN 4=ERR)\r\n"
+            }
         }
         else if (cmd == "distance") {
             if (args.size < 3) { user.outStr += "Usage: distance <callsign1> <callsign2>\r\n"; return }

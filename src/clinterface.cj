@@ -234,10 +234,64 @@ public class ClInterface <: NetInterface {
     public func handleHandoff(user: ClUser, line: String): Unit {
         match (user.client) {
             case Some(c) =>
-                // $HOcallsign:frequency:controller
-                if (line.size > 3) {
-                    broadcastToClients(line + "\r\n", c.callsign)
-                }
+                if (line.size > 3) { broadcastToClients(line + "\r\n", c.callsign) }
+            case None => ()
+        }
+    }
+
+    // ---- $HA 移交确认（Handoff Accept）----
+    public func handleHandoffAccept(user: ClUser, line: String): Unit {
+        match (user.client) {
+            case Some(c) =>
+                if (line.size > 3) { broadcastToClients(line + "\r\n", c.callsign) }
+            case None => ()
+        }
+    }
+
+    // ---- $C? 通信请求 ----
+    public func handleCommsRequest(user: ClUser, line: String): Unit {
+        match (user.client) {
+            case Some(c) =>
+                if (line.size > 3) { broadcastToClients(line + "\r\n", c.callsign) }
+            case None => ()
+        }
+    }
+
+    // ---- $CI 通信回复 ----
+    public func handleCommsReply(user: ClUser, line: String): Unit {
+        match (user.client) {
+            case Some(c) =>
+                if (line.size > 3) { broadcastToClients(line + "\r\n", c.callsign) }
+            case None => ()
+        }
+    }
+
+    // ---- #PC 坐标协议 ----
+    public func handlePilotCommand(user: ClUser, line: String): Unit {
+        match (user.client) {
+            case Some(c) =>
+                // 广播给同频率管制员
+                routeMessage(c.callsign, "*", line)
+            case None => ()
+        }
+    }
+
+    // ---- #CD 气象云层数据 / #WD 风数据 / #TD 温度数据 ----
+    public func handleWeatherData(user: ClUser, line: String): Unit {
+        match (user.client) {
+            case Some(c) =>
+                // 广播给同频率客户端
+                broadcastToClients(line + "\r\n", c.callsign)
+            case None => ()
+        }
+    }
+
+    // ---- $AX ACARS 请求 ----
+    public func handleAcars(user: ClUser, line: String): Unit {
+        match (user.client) {
+            case Some(c) =>
+                let dest = if (line.size > 3) { splitStr(substrFrom(line, 3), ":")[0] } else { "*" }
+                routeMessage(c.callsign, dest, line)
             case None => ()
         }
     }
@@ -461,6 +515,12 @@ public class ClInterface <: NetInterface {
         for (u in this.users) { u.outStr += data }
     }
 
+    public func broadcastWeatherProfile(wp: WeatherProfile): Unit {
+        let wx = wp.toWxMessage("server") + "\r\n"
+        let cd = wp.toCdMessage() + "\r\n"
+        for (u in this.users) { u.outStr += wx + cd }
+    }
+
     private func buildAddClientLine(c: Client): String {
         if (c.isAtc()) { return "#AA${c.callsign}:SERVER:${c.realname}:${c.cid}::${c.rating}:${c.protocol}\r\n" }
         else { return "#AP${c.callsign}:SERVER:${c.cid}::${c.rating}:${c.protocol}:${c.simtype}\r\n" }
@@ -554,6 +614,12 @@ public class ClUser <: NetUser {
         else if (trimmed.startsWith("\$CQ")) { this.iface.handleCq(this, trimmed) }
         else if (trimmed.startsWith("#WX")) { this.iface.handleWeather(this, trimmed) }
         else if (trimmed.startsWith("\$HO")) { this.iface.handleHandoff(this, trimmed) }
+        else if (trimmed.startsWith("\$HA")) { this.iface.handleHandoffAccept(this, trimmed) }
+        else if (trimmed.startsWith("\$C?")) { this.iface.handleCommsRequest(this, trimmed) }
+        else if (trimmed.startsWith("\$CI")) { this.iface.handleCommsReply(this, trimmed) }
+        else if (trimmed.startsWith("#PC")) { this.iface.handlePilotCommand(this, trimmed) }
+        else if (trimmed.startsWith("#CD") || trimmed.startsWith("#WD") || trimmed.startsWith("#TD") || trimmed.startsWith("#DL")) { this.iface.handleWeatherData(this, trimmed) }
+        else if (trimmed.startsWith("\$AX")) { this.iface.handleAcars(this, trimmed) }
         else if (trimmed.startsWith("\$!!")) { this.iface.handleKill(this, trimmed) }
         else if (trimmed.startsWith("#DA") || trimmed.startsWith("#DP")) {
             if (let Some(c) <- this.client) {

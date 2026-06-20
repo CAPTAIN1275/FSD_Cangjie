@@ -21,9 +21,19 @@ public class MetarManager {
     public func getMetar(icao: String): ?String {
         match (this.profiles.get(icao)) {
             case Some(p) =>
-                // 检查缓存是否过期（15 分钟）
-                if (mgmtime() - p.updated < MAXMETARDOWNLOADTIME) {
-                    return Some(p.data)
+                if (mgmtime() - p.time < MAXMETARDOWNLOADTIME) {
+                    return Some(p.raw)
+                }
+            case None => ()
+        }
+        return None
+    }
+
+    public func getProfile(icao: String): ?WeatherProfile {
+        match (this.profiles.get(icao)) {
+            case Some(p) =>
+                if (mgmtime() - p.time < MAXMETARDOWNLOADTIME) {
+                    return Some(p)
                 }
             case None => ()
         }
@@ -31,7 +41,13 @@ public class MetarManager {
     }
 
     public func setMetar(icao: String, data: String): Unit {
-        this.profiles[icao] = WeatherProfile(icao, data, mgmtime())
+        let wp = WeatherProfile(icao, data)
+        this.profiles[icao] = wp
+        // 广播天气剖面给在线客户端
+        match (clientInterface) {
+            case Some(ci) => ci.broadcastWeatherProfile(wp)
+            case None => ()
+        }
     }
 
     public func deleteMetar(icao: String): Unit {
@@ -131,14 +147,3 @@ public class MetarManager {
     }
 }
 
-public class WeatherProfile {
-    var icao: String
-    var data: String
-    var updated: Int64
-
-    public init(icao: String, data: String, updated: Int64) {
-        this.icao = icao
-        this.data = data
-        this.updated = updated
-    }
-}

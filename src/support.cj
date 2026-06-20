@@ -66,3 +66,15 @@ func calcNMDistance(lat1: Float64, lon1: Float64, lat2: Float64, lon2: Float64):
     return sqrtApprox(dlat * dlat + dlon * dlon)
 }
 
+// 简单 LCG 随机数（Cangjie 无自带 random）
+var _randState: Int64 = 0
+func randSeed(s: Int64): Unit { _randState = s }
+func randInt(max: Int64): Int64 {
+    if (_randState == 0) { _randState = mgmtime() }
+    _randState = (_randState * 1103515245 + 12345) & 0x7fffffff
+    return if (max <= 0) { _randState } else { _randState % max }
+}
+func randFloat(): Float64 {
+    return Float64(randInt(1000000)) / 1000000.0
+}
+
