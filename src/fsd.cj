@@ -14,12 +14,14 @@ public class FsdEngine {
     var certFile: ?String; var whazzupFile: ?String
     var prevNotify: Int64; var prevLagCheck: Int64; var prevCertCheck: Int64; var prevWhazzup: Int64
     var prevHeartbeat: Int64
+    var prevWindDelta: Int64
     var timer: Int64; var clientPort: Int32; var serverPort: Int32; var systemPort: Int32
 
     public init(configFile: String) {
         this.certFile = None; this.whazzupFile = None
         this.prevNotify = 0; this.prevLagCheck = 0; this.prevCertCheck = 0; this.prevWhazzup = 0
         this.prevHeartbeat = 0
+        this.prevWindDelta = 0
         this.timer = 0; this.clientPort = DEFAULT_CLIENT_PORT
         this.serverPort = DEFAULT_SERVER_PORT; this.systemPort = DEFAULT_SYSTEM_PORT
 
@@ -30,6 +32,7 @@ public class FsdEngine {
         this.prevNotify = mgmtime(); this.prevLagCheck = mgmtime()
         this.timer = mgmtime(); this.prevWhazzup = mgmtime()
         this.prevHeartbeat = mgmtime()
+        this.prevWindDelta = mgmtime()
     }
 
     public func configure(): Unit {
@@ -187,6 +190,23 @@ public class FsdEngine {
                     } catch (e: Exception) { dolog(L_WARNING, "Heartbeat error: ${e}") }
                 case None => ()
             }
+        }
+        // Wind Delta — 每 70 秒广播随机风变化
+        if ((now - this.prevWindDelta) >= WINDDELTATIMEOUT) {
+            this.prevWindDelta = now
+            let ts = sprintGmt(now)
+            // 为每个在线客户端生成随机风数据
+            var cl = rootClient
+            while (true) { match (cl) {
+                case Some(c) =>
+                    let wd = randInt(360)
+                    let ws = randInt(50)
+                    let wg = if (randInt(10) > 3) { randInt(30) } else { 0 }
+                    let msg = "#DL${c.callsign}:${ts}:${wd}:${ws}:${wg}\r\n"
+                    clientInterface?.broadcastToAll(msg)
+                    cl = c.next
+                case None => break
+            }}
         }
         checkServerTimeouts(now); checkClientTimeouts(now)
     }

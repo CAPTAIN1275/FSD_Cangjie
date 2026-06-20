@@ -19,11 +19,35 @@ public class ServInterface <: NetInterface {
     }
     public override func createUser(socket: TcpSocket): NetUser { return ServUser(socket, this) }
 
-    // ---- 主动连接 ----
+    // ---- 主动连接（自动重连）----
     public func addUser(hostname: String, port: Int32, _ident: ?String): Int32 {
         dolog(L_INFO, "Connecting to server ${hostname}:${port}")
-        // 异步连接�?NetUser/TcpSocket 处理，这里预�?
+        spawn { connectLoop(hostname, port) }
         return 1
+    }
+
+    private func connectLoop(hostname: String, port: Int32): Unit {
+        while (this.runFlag) {
+            try {
+                var sock = TcpSocket(hostname, UInt16(port))
+                sock.connect()
+                dolog(L_INFO, "Connected to server ${hostname}:${port}")
+                let user = createUser(sock)
+                // 记录连接时间（user 是 ServUser，通过 init 自动触发 sendFeed）
+                // 等待连接结束
+                while (this.runFlag && user.alive > 0) {
+                    sleep(100 * Duration.millisecond)
+                }
+                dolog(L_WARNING, "Server ${hostname}:${port} disconnected, reconnecting...")
+                try { sock.close() } catch (_: Exception) {}
+            } catch (e: Exception) {
+                dolog(L_WARNING, "Server ${hostname}:${port} connect failed: ${e}")
+            }
+            // 等待重试
+            if (this.runFlag) {
+                sleep(30000 * Duration.millisecond)
+            }
+        }
     }
     public func allow(ip: String): Unit { this.allowList.add(ip) }
 
