@@ -11,6 +11,7 @@ var configMan: ?ConfigManager = None
 var metarManager: ?MetarManager = None
 var fsdEngine: ?FsdEngine = None
 var replayBuf: String = ""
+var blockedFlights: String = ""  // 禁止连飞的航班号逗号分隔
 
 public class FsdEngine {
     var certFile: ?String; var whazzupFile: ?String
@@ -48,6 +49,9 @@ public class FsdEngine {
                 this.systemPort = gPort(g, "systemport", DEFAULT_SYSTEM_PORT)
                 this.certFile = match (g.getEntry("certificates")) { case Some(e) => e.getData(); case None => None }
                 this.whazzupFile = match (g.getEntry("whazzup")) { case Some(e) => e.getData(); case None => None }
+                let bf = match (g.getEntry("blocked_flights")) { case Some(e) => e.getData(); case None => "" }
+                blockedFlights = bf
+                if (bf != "") { dolog(L_INFO, "Blocked flights: ${bf}") }
             case None => ()
         }; case None => () }
         configMyServer()
@@ -286,8 +290,8 @@ public class FsdEngine {
                             wz.append(":${fp.revision}:${fpType}:${fp.depTime}:${fp.actDepTime}:${fp.hrsEnroute}:${fp.minEnroute}:${fp.hrsFuel}:${fp.minFuel}:${fp.altAirport}:${fp.remarks}:${fp.route}")
                         case None => wz.append(":::::::::::")
                     }
-                    // dataseg7: starttime:pbh
-                    wz.append("::::::${sprintGmt(c.startTime)}:${c.pbh}\n")
+                    // dataseg7: starttime:heading(从位置计算)
+                    wz.append("::::::${sprintGmt(c.startTime)}:HDG${Int64(c.headingCalc)}\n")
                     cl = c.next
                 ; case None => break }}
                 wz.append("!SERVERS\n")

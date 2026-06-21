@@ -10,6 +10,8 @@ public class Client {
     var facilitytype: Int32; var visualrange: Int32
     var simtype: Int32
     var fd: Int32; var ip: String; var alive: Int64; var startTime: Int64
+    var prevLat: Float64; var prevLon: Float64  // 用于计算航向
+    var headingCalc: Float64  // 从前后位置计算的航向
     var location: ?Server; var plan: ?FlightPlan
     var next: ?Client = None; var prev: ?Client = None
 
@@ -22,6 +24,7 @@ public class Client {
         this.transponder = 0; this.frequency = 0; this.facilitytype = 0
         this.visualrange = 0; this.fd = -1; this.ip = ""
         this.simtype = 0
+        this.prevLat = 0.0; this.prevLon = 0.0; this.headingCalc = 0.0
         this.alive = mgmtime(); this.startTime = mgmtime()
         this.location = None; this.plan = None
     }

@@ -1,4 +1,5 @@
-﻿package FSD_Cangjie
+﻿// support.cj — 辅助函数
+package FSD_Cangjie
 
 import std.time.*
 import std.collection.*
@@ -19,11 +20,7 @@ func initLog(_path: String): Unit {}
 
 func dolog(level: Int32, msg: String): Unit {
     if (level < currentLogLevel) { return }
-    let levelStr = if (level == L_DEBUG) { "DEBUG" }
-        else if (level == L_INFO) { "INFO" }
-        else if (level == L_WARNING) { "WARN" }
-        else if (level == L_ERR) { "ERROR" }
-        else { "UNKN" }
+    let levelStr = if (level == L_DEBUG) { "DEBUG" } else if (level == L_INFO) { "INFO" } else if (level == L_WARNING) { "WARN" } else if (level == L_ERR) { "ERROR" } else { "UNKN" }
     let now = DateTime.now()
     println("${now.format("yyyy-MM-dd HH:mm:ss")} [${levelStr}] ${msg}")
 }
@@ -32,41 +29,69 @@ func mgmtime(): Int64 {
     let now = DateTime.now()
     return (now.year - 1970) * 31536000 + now.dayOfYear * 86400 + now.hour * 3600 + now.minute * 60 + now.second
 }
-
 func mtime(): Int64 { return mgmtime() }
 
 func sprintGmt(_t: Int64): String { return DateTime.now().format("yyyyMMddHHmmss") }
 func sprintGmtDate(_t: Int64): String { return DateTime.now().format("yyyyMMdd") }
 
-// ---- 数学辅助（无 std.math）----
 func sqrtApprox(x: Float64): Float64 {
     if (x <= 0.0) { return 0.0 }
     var guess = x / 2.0
-    for (_i in 0..20) {
-        guess = (guess + x / guess) / 2.0
-    }
+    for (_i in 0..20) { guess = (guess + x / guess) / 2.0 }
     return guess
 }
 
+let PI: Float64 = 3.141592653589793
+func absF(x: Float64): Float64 { return if (x < 0.0) { -x } else { x } }
+
 func cosApprox(deg: Float64): Float64 {
-    // 泰勒近似 cos(x) ≈ 1 - x²/2 + x⁴/24 (x 为弧度)
-    let rad = deg * 3.1415926535 / 180.0
-    let r2 = rad * rad
-    let r4 = r2 * r2
+    let rad = deg * PI / 180.0; let r2 = rad * rad; let r4 = r2 * r2
     return 1.0 - r2 / 2.0 + r4 / 24.0
+}
+
+// 弧度版三角函数
+func sinRad(x: Float64): Float64 {
+    var a = x; while (a > PI) { a -= 2.0 * PI }; while (a < -PI) { a += 2.0 * PI }
+    let a2 = a * a; let a3 = a2 * a; let a5 = a3 * a2
+    return a - a3 / 6.0 + a5 / 120.0
+}
+func cosRad(x: Float64): Float64 {
+    var a = x; while (a > PI) { a -= 2.0 * PI }; while (a < -PI) { a += 2.0 * PI }
+    let a2 = a * a; let a4 = a2 * a2
+    return 1.0 - a2 / 2.0 + a4 / 24.0
+}
+func atan2Rad(y: Float64, x: Float64): Float64 {
+    if (x == 0.0) { return if (y > 0.0) { PI / 2.0 } else if (y < 0.0) { -PI / 2.0 } else { 0.0 } }
+    let absY = absF(y); let absX = absF(x)
+    let r = if (absY <= absX) { absY / absX } else { absX / absY }
+    let r2 = r * r; let r3 = r2 * r; let r5 = r3 * r2
+    var ang = r - r3 / 3.0 + r5 / 5.0
+    if (absY > absX) { ang = PI / 2.0 - ang }
+    if (x < 0.0) { ang = PI - ang }
+    return if (y < 0.0) { -ang } else { ang }
 }
 
 func calcNMDistance(lat1: Float64, lon1: Float64, lat2: Float64, lon2: Float64): Float64 {
     if (lat1 == 0.0 && lon1 == 0.0) { return -1.0 }
     if (lat2 == 0.0 && lon2 == 0.0) { return -2.0 }
-    // 平面近似: 1°纬度=60NM, 1°经度=60*cos(平均纬度)NM
     let meanLat = (lat1 + lat2) / 2.0
     let dlat = (lat2 - lat1) * 60.0
     let dlon = (lon2 - lon1) * 60.0 * cosApprox(meanLat)
     return sqrtApprox(dlat * dlat + dlon * dlon)
 }
 
-// 简单 LCG 随机数（Cangjie 无自带 random）
+// 计算两点间方位角（度）
+func calcBearing(lat1: Float64, lon1: Float64, lat2: Float64, lon2: Float64): Float64 {
+    if (lat1 == lat2 && lon1 == lon2) { return 0.0 }
+    let dlon = (lon2 - lon1) * PI / 180.0
+    let rlat1 = lat1 * PI / 180.0; let rlat2 = lat2 * PI / 180.0
+    let y = sinRad(dlon) * cosRad(rlat2)
+    let x = cosRad(rlat1) * sinRad(rlat2) - sinRad(rlat1) * cosRad(rlat2) * cosRad(dlon)
+    let bearing = atan2Rad(y, x) * 180.0 / PI
+    return if (bearing < 0.0) { bearing + 360.0 } else { bearing }
+}
+
+// LCG 随机数
 var _randState: Int64 = 0
 func randSeed(s: Int64): Unit { _randState = s }
 func randInt(max: Int64): Int64 {
@@ -74,7 +99,4 @@ func randInt(max: Int64): Int64 {
     _randState = (_randState * 1103515245 + 12345) & 0x7fffffff
     return if (max <= 0) { _randState } else { _randState % max }
 }
-func randFloat(): Float64 {
-    return Float64(randInt(1000000)) / 1000000.0
-}
-
+func randFloat(): Float64 { return Float64(randInt(1000000)) / 1000000.0 }

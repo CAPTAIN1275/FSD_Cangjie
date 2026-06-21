@@ -36,6 +36,14 @@ public class ClInterface <: NetInterface {
         let callsign = parts[0]
         if (parts.size < 7) { sendError(user, ERR_SYNTAX, callsign, callsign); return }
 
+        // 检查是否禁止的航班号
+        if (isBlockedFlight(callsign)) {
+            user.outStr += "\$ERserver:${callsign}:013:${callsign}:Accident flight number rejected\r\n"
+            user.shouldClose = true; user.delayClose = true
+            dolog(L_INFO, "Blocked flight rejected: ${callsign}")
+            return
+        }
+
         // parts[1] = "SERVER" (literal, skip)
         let isAtc = (prefix == "#AA")
 
@@ -200,11 +208,27 @@ public class ClInterface <: NetInterface {
             }
             // 过滤零坐标（客户端刚连上的默认位置），避免非洲西海岸闪现
             if (c.lat > -1.0 && c.lat < 1.0 && c.lon > -1.0 && c.lon < 1.0) { return }
+            // 从 PBH 解码航向（10 位精度，地面静止时也有数据）
+            let pbhVal = c.pbh
+            var pbhHeading: Float64 = 0.0
+            if (pbhVal > 0) {
+                let hBits = (Int64(pbhVal) >> 2) & 0x3FF
+                pbhHeading = Float64(hBits) * 360.0 / 1024.0
+            }
+            // 从前后位置计算方位角（移动时更准）
+            var posHeading: Float64 = 0.0
+            if (c.prevLat != 0.0 || c.prevLon != 0.0) {
+                posHeading = calcBearing(c.prevLat, c.prevLon, c.lat, c.lon)
+            }
+            c.prevLat = c.lat; c.prevLon = c.lon
+            // 优先用位置算的航向（移动时），静止时回退到 PBH
+            var finalHeading = pbhHeading
+            if (posHeading > 0.0) { finalHeading = posHeading }
+            c.headingCalc = finalHeading
             // 飞行记录（缓冲到全局 replayBuf，定时刷盘）
             try {
                 let ts = sprintGmt(mgmtime())
-                let heading = Int64(c.pbh & 0xFF) * 360 / 256
-                replayBuf += "${ts} ${c.callsign} ${c.lat} ${c.lon} ${c.altitude} ${heading} ${c.groundspeed}\n"
+                replayBuf += "${ts} ${c.callsign} ${c.lat} ${c.lon} ${c.altitude} ${Int64(finalHeading)} ${c.groundspeed}\n"
             } catch (_: Exception) {}
             broadcastToClients(line + "\r\n", c.callsign)
         ; case None => () }
@@ -659,4 +683,17 @@ public class ClUser <: NetUser {
     public override func handleRawLine(bytes: ArrayList<UInt8>): Unit {
         this.iface.handleRawTextMessage(this, bytes)
     }
+}
+
+// 检查呼号是否包含禁止的航班号
+func isBlockedFlight(callsign: String): Bool {
+    if (blockedFlights == "") { return false }
+    let cs = callsign.toUpper()
+    let items = splitStr(blockedFlights, ",")
+    for (i in 0..items.size) {
+        let num = items[Int64(i)].trim().toUpper()
+        if (num == "") { continue }
+        if (cs.contains(num)) { return true }
+    }
+    return false
 }
