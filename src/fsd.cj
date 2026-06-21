@@ -10,6 +10,7 @@ var systemInterface: ?SysInterface = None
 var configMan: ?ConfigManager = None
 var metarManager: ?MetarManager = None
 var fsdEngine: ?FsdEngine = None
+var replayBuf: String = ""
 
 public class FsdEngine {
     var certFile: ?String; var whazzupFile: ?String
@@ -211,6 +212,16 @@ public class FsdEngine {
                     cl = c.next
                 case None => break
             }}
+        }
+        // 飞行记录刷盘（每 10 秒）
+        if (replayBuf != "") {
+            let dateStr = sprintGmtDate(mgmtime())
+            var existing = ""
+            try { existing = String.fromUtf8(File.readFrom(Path("replay_${dateStr}.txt"))) } catch (_: Exception) {}
+            try {
+                File.writeTo(Path("replay_${dateStr}.txt"), (existing + replayBuf).toArray())
+                replayBuf = ""
+            } catch (_: Exception) {}
         }
         checkServerTimeouts(now); checkClientTimeouts(now)
     }

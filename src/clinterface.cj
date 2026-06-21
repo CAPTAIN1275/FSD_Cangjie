@@ -200,6 +200,12 @@ public class ClInterface <: NetInterface {
             }
             // 过滤零坐标（客户端刚连上的默认位置），避免非洲西海岸闪现
             if (c.lat > -1.0 && c.lat < 1.0 && c.lon > -1.0 && c.lon < 1.0) { return }
+            // 飞行记录（缓冲到全局 replayBuf，定时刷盘）
+            try {
+                let ts = sprintGmt(mgmtime())
+                let heading = Int64(c.pbh & 0xFF) * 360 / 256
+                replayBuf += "${ts} ${c.callsign} ${c.lat} ${c.lon} ${c.altitude} ${heading} ${c.groundspeed}\n"
+            } catch (_: Exception) {}
             broadcastToClients(line + "\r\n", c.callsign)
         ; case None => () }
     }
