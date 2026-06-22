@@ -79,7 +79,8 @@ public class ConfigManager {
             let newContent = readFileStr(this.filename)
             if (newContent != "" && newContent != this.lastContent) {
                 dolog(L_INFO, "Config file changed, reloading...")
-                this.groups = HashMap<String, ConfigGroup>()
+                // 先构建新 HashMap，完成后一次性替换（原子热重载）
+                let newGroups = HashMap<String, ConfigGroup>()
                 this.lastContent = newContent
                 var currentGroup: ?String = None
                 for (line in splitStr(newContent, "\n")) {
@@ -87,7 +88,7 @@ public class ConfigManager {
                     if (trimmed == "") { continue }
                     if (trimmed.toRuneArray()[0] == r'[') {
                         match (trimmed.indexOf(r']')) {
-                            case Some(e) => let n = substr(trimmed, 1, e); this.groups[n] = ConfigGroup(n); currentGroup = n
+                            case Some(e) => let n = substr(trimmed, 1, e); newGroups[n] = ConfigGroup(n); currentGroup = n
                             case None => ()
                         }
                         continue
@@ -95,10 +96,11 @@ public class ConfigManager {
                     match (trimmed.indexOf(r'=')) {
                         case Some(e) =>
                             let k = substrTo(trimmed, e).trim(); let v = substrFrom(trimmed, e + 1).trim()
-                            match (currentGroup) { case Some(gn) => match (this.groups.get(gn)) { case Some(g) => g.createEntry(k, v); case None => () }; case None => () }
+                            match (currentGroup) { case Some(gn) => match (newGroups.get(gn)) { case Some(g) => g.createEntry(k, v); case None => () }; case None => () }
                         case None => ()
                     }
                 }
+                this.groups = newGroups  // 一次性替换
             }
         }
         return 0

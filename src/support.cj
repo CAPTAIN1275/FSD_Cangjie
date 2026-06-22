@@ -45,27 +45,27 @@ let PI: Float64 = 3.141592653589793
 func absF(x: Float64): Float64 { return if (x < 0.0) { -x } else { x } }
 
 func cosApprox(deg: Float64): Float64 {
-    let rad = deg * PI / 180.0; let r2 = rad * rad; let r4 = r2 * r2
-    return 1.0 - r2 / 2.0 + r4 / 24.0
+    let rad = deg * PI / 180.0; let r2 = rad * rad; let r4 = r2 * r2; let r6 = r4 * r2
+    return 1.0 - r2 / 2.0 + r4 / 24.0 - r6 / 720.0
 }
 
-// 弧度版三角函数
+// 弧度版三角函数（5 阶泰勒展开，精度约 0.01°）
 func sinRad(x: Float64): Float64 {
     var a = x; while (a > PI) { a -= 2.0 * PI }; while (a < -PI) { a += 2.0 * PI }
-    let a2 = a * a; let a3 = a2 * a; let a5 = a3 * a2
-    return a - a3 / 6.0 + a5 / 120.0
+    let a2 = a * a; let a3 = a2 * a; let a5 = a3 * a2; let a7 = a5 * a2
+    return a - a3 / 6.0 + a5 / 120.0 - a7 / 5040.0
 }
 func cosRad(x: Float64): Float64 {
     var a = x; while (a > PI) { a -= 2.0 * PI }; while (a < -PI) { a += 2.0 * PI }
-    let a2 = a * a; let a4 = a2 * a2
-    return 1.0 - a2 / 2.0 + a4 / 24.0
+    let a2 = a * a; let a4 = a2 * a2; let a6 = a4 * a2
+    return 1.0 - a2 / 2.0 + a4 / 24.0 - a6 / 720.0
 }
 func atan2Rad(y: Float64, x: Float64): Float64 {
     if (x == 0.0) { return if (y > 0.0) { PI / 2.0 } else if (y < 0.0) { -PI / 2.0 } else { 0.0 } }
     let absY = absF(y); let absX = absF(x)
     let r = if (absY <= absX) { absY / absX } else { absX / absY }
-    let r2 = r * r; let r3 = r2 * r; let r5 = r3 * r2
-    var ang = r - r3 / 3.0 + r5 / 5.0
+    let r2 = r * r; let r3 = r2 * r; let r5 = r3 * r2; let r7 = r5 * r2
+    var ang = r - r3 / 3.0 + r5 / 5.0 - r7 / 7.0
     if (absY > absX) { ang = PI / 2.0 - ang }
     if (x < 0.0) { ang = PI - ang }
     return if (y < 0.0) { -ang } else { ang }

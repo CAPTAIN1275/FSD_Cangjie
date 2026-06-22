@@ -58,6 +58,13 @@ public class FsdEngine {
         }; case None => () }
         configMyServer()
         readCert()
+        // 检查系统端口是否仍使用默认密码
+        match (configMan) { case Some(cm) => match (cm.getGroup("system")) {
+            case Some(g) => match (g.getEntry("password")) {
+                case Some(e) => if (e.getData() == "disable") { dolog(L_WARNING, "Default system password 'disable' in use! Change it in fsd.conf") }
+                case None => ()
+            }; case None => ()
+        }; case None => () }
     }
 
     public func configMyServer(): Unit {
@@ -228,20 +235,20 @@ public class FsdEngine {
                 case None => ()
             }
         }
-        // Wind Delta — 每 70 秒广播随机风变化
+        // Wind Delta — 每 70 秒广播随机风变化（合并为单条消息减少流量）
         if ((now - this.prevWindDelta) >= WINDDELTATIMEOUT) {
             this.prevWindDelta = now
             let ts = sprintGmt(now)
-            // 为每个在线客户端生成随机风数据
+            var windMsg = StringBuilder()
             let _keys = getClientKeys()
             for (_i in 0.._keys.size) {
                 let c = clientMap.get(_keys[_i]).getOrThrow()
                 let wd = randInt(360)
                 let ws = randInt(50)
                 let wg = if (randInt(10) > 3) { randInt(30) } else { 0 }
-                let msg = "#DL${c.callsign}:${ts}:${wd}:${ws}:${wg}\r\n"
-                clientInterface?.broadcastToAll(msg)
+                windMsg.append("#DL${c.callsign}:${ts}:${wd}:${ws}:${wg}\r\n")
             }
+            clientInterface?.broadcastToAll(windMsg.toString())
         }
         // 飞行记录刷盘（每 10 秒）
         replayLock.lock()
