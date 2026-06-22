@@ -1,6 +1,10 @@
 package FSD_Cangjie
 
-var rootClient: ?Client = None
+import std.collection.*
+
+var clientMap = HashMap<String, Client>()
+// CID→呼号 索引，用于 O(1) CID 查找
+var cidIndex = HashMap<String, String>()
 
 public class Client {
     var callsign: String; var cid: String; var realname: String
@@ -10,10 +14,9 @@ public class Client {
     var facilitytype: Int32; var visualrange: Int32
     var simtype: Int32
     var fd: Int32; var ip: String; var alive: Int64; var startTime: Int64
-    var prevLat: Float64; var prevLon: Float64  // 用于计算航向
-    var headingCalc: Float64  // 从前后位置计算的航向
+    var prevLat: Float64; var prevLon: Float64
+    var headingCalc: Float64
     var location: ?Server; var plan: ?FlightPlan
-    var next: ?Client = None; var prev: ?Client = None
 
     public init(callsign: String, cid: String, realname: String, password: String,
                 _type: Int32, rating: Int32, protocol: Int32) {
@@ -33,7 +36,6 @@ public class Client {
     public func isPilot(): Bool { return this.`type` == CLIENT_PILOT }
     public func getrange(): Int32 {
         if (this.isAtc()) { return this.visualrange }
-        // Pilot 通信范围基于等级
         if (this.rating >= LEV_CTLFLN) { return 200 }
         if (this.rating >= LEV_APPTRAIN) { return 150 }
         if (this.rating >= LEV_CERTPILOT) { return 100 }
@@ -44,54 +46,35 @@ public class Client {
     }
 }
 
-func addClient(c: Client): Unit {
-    match (rootClient) {
-        case Some(r) =>
-            var last = r
-            while (true) {
-                match (last.next) {
-                    case Some(n) => last = n
-                    case None => break
-                }
-            }
-            last.next = c; c.prev = last
-        case None => rootClient = c
+// O(1) HashMap 替代 O(n) 链表
+func addClient(c: Client): Bool {
+    let key = c.callsign.toUpper()
+    match (clientMap.get(key)) {
+        case Some(_) => return false
+        case None => ()
     }
+    clientMap[key] = c
+    cidIndex[c.cid] = key
+    return true
 }
 
 func removeClient(c: Client): Unit {
-    match (c.prev) {
-        case Some(p) => p.next = c.next
-        case None => rootClient = c.next
-    }
-    match (c.next) {
-        case Some(n) => n.prev = c.prev
-        case None => ()
-    }
+    clientMap.remove(c.callsign.toUpper())
+    cidIndex.remove(c.cid)
 }
 
 func getClient(callsign: String): ?Client {
-    var cur = rootClient
-    while (true) {
-        match (cur) {
-            case Some(cl) =>
-                if (cl.callsign == callsign) { return cur }
-                cur = cl.next
-            case None => break
-        }
-    }
-    return None
+    return clientMap.get(callsign.toUpper())
 }
 
-func clientCount(): Int32 {
-    var count: Int32 = 0
-    var cur = rootClient
-    while (true) {
-        match (cur) {
-            case Some(cl) =>
-                count += 1; cur = cl.next
-            case None => break
-        }
+// O(1) CID 查找（通过 cidIndex）
+func getClientByCid(cid: String): ?Client {
+    match (cidIndex.get(cid)) {
+        case Some(cs) => return clientMap.get(cs)
+        case None => return None
     }
-    return count
+}
+
+func clientCount(): Int64 {
+    return clientMap.size
 }

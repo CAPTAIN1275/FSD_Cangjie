@@ -22,7 +22,9 @@ public class ClInterface <: NetInterface {
 
     public func sendError(user: ClUser, code: Int32, env: String, callsign: String): Unit {
         let paddedCode = if (code < 10) { "00${code}" } else if (code < 100) { "0${code}" } else { "${code}" }
-        user.outStr += "\$ERserver:${callsign}:${paddedCode}:${env}:${errStr(code)}\r\n"
+        let msg = "\$ERserver:${callsign}:${paddedCode}:${env}:${errStr(code)}\r\n"
+        // 直接写 socket，C 版方式——不等 outStr 缓冲循环
+        try { user.socket.write(toBuf(msg)); user.outStr = "" } catch (_: Exception) { user.outStr += msg }
     }
 
     // #AA 格式: #AAcallsign:SERVER:realname:cid:password:rating:protocol
@@ -33,14 +35,15 @@ public class ClInterface <: NetInterface {
         let parts = splitStr(data, ":")
         if (parts.size < 2) { sendError(user, ERR_SYNTAX, "unknown", "unknown"); return }
 
-        let callsign = parts[0]
+        let callsign = parts[0].toUpper()  // 统一大写
         if (parts.size < 7) { sendError(user, ERR_SYNTAX, callsign, callsign); return }
 
         // 检查是否禁止的航班号
         if (isBlockedFlight(callsign)) {
-            user.outStr += "\$ERserver:${callsign}:013:${callsign}:Accident flight number rejected\r\n"
-            user.shouldClose = true; user.delayClose = true
-            dolog(L_INFO, "Blocked flight rejected: ${callsign}")
+            sendError(user, ERR_NOSUCHCS, "", "unknown")
+            let tm = "#TMserver:${callsign}:Accident flight number rejected\r\n"
+            try { user.socket.write(toBuf(tm)) } catch (_: Exception) {}
+            user.shouldClose = true; user.delayClose = false
             return
         }
 
@@ -52,14 +55,26 @@ public class ClInterface <: NetInterface {
             if (parts.size < 7) { sendError(user, ERR_SYNTAX, callsign, callsign); return }
             let realname = parts[2]; let cid = parts[3]; let password = parts[4]
             let rating = parseInt32(parts[5]); let protocol = parseInt32(parts[6])
-            if (protocol != NEEDREVISION) { sendError(user, ERR_REVISION, "${protocol}", "unknown"); user.shouldClose = true; user.delayClose = true; return }
-            if (let Some(_) <- getClient(callsign)) { sendError(user, ERR_CSINUSE, callsign, "unknown"); user.shouldClose = true; user.delayClose = true; return }
+            if (let Some(_) <- getClient(callsign)) { sendError(user, ERR_CSINUSE, "", "unknown"); user.shouldClose = true; user.delayClose = true; return }
+            if (protocol != NEEDREVISION) { sendError(user, ERR_REVISION, "", "unknown"); user.shouldClose = true; user.delayClose = true; return }
             let (verified, actualLevel) = verifyUser(cid, password)
             if (!verified) { sendError(user, ERR_CIDINVALID, cid, "unknown"); user.shouldClose = true; user.delayClose = true; return }
             if (actualLevel <= LEV_SUSPENDED) { sendError(user, ERR_CSSUSPEND, cid, "unknown"); return }
-            if (actualLevel < 2) { sendError(user, ERR_LEVEL, cid, "ATC requires level >= 2"); user.shouldClose = true; user.delayClose = true; return }
+            if (actualLevel < 2) { sendError(user, ERR_LEVEL, cid, "unknown"); user.shouldClose = true; user.delayClose = true; return }
+            // CID 唯一性检查：同一 CID 不能重复登录（仅 OBS 豁免）
+            match (getClientByCid(cid)) {
+                case Some(existing) =>
+                    let exCsLen = Int64(existing.callsign.toRuneArray().size)
+                    if (!(exCsLen > 4 && substrFrom(existing.callsign, exCsLen - 4) == "_OBS")) {
+                        sendError(user, ERR_CSINUSE, "", "unknown")
+                        user.shouldClose = true; user.delayClose = true; return
+                    }
+                case None => ()
+            }
             let client = Client(callsign, cid, realname, password, CLIENT_ATC, actualLevel, protocol)
-            client.location = myServer; addClient(client); user.client = client
+            client.location = myServer
+            if (!addClient(client)) { sendError(user, ERR_CSINUSE, "", "unknown"); user.shouldClose = true; user.delayClose = true; return }
+            user.client = client
             dolog(L_INFO, "ATC login: ${callsign} level=${actualLevel}")
             // 发送在线客户端列表给新客户端
             sendAllClientsTo(user)
@@ -71,19 +86,32 @@ public class ClInterface <: NetInterface {
             let simtype = parseInt32(parts[6]); let realname = parts[7]
             let csLen = Int64(callsign.toRuneArray().size)
             let isObserver = (csLen > 4 && substrFrom(callsign, csLen - 4) == "_OBS")
-            if (protocol != NEEDREVISION) { sendError(user, ERR_REVISION, "${protocol}", "unknown"); user.shouldClose = true; user.delayClose = true; return }
             if (isObserver) {
                 // 限制每个呼号只能有一个OBS
-                if (let Some(_) <- getClient(callsign)) { sendError(user, ERR_CSINUSE, callsign, "OBS already connected"); user.shouldClose = true; user.delayClose = true; return }
+                if (let Some(_) <- getClient(callsign)) { sendError(user, ERR_CSINUSE, "", "unknown"); user.shouldClose = true; user.delayClose = true; return }
             } else {
-                if (let Some(_) <- getClient(callsign)) { sendError(user, ERR_CSINUSE, callsign, "unknown"); user.shouldClose = true; user.delayClose = true; return }
+                if (let Some(_) <- getClient(callsign)) { sendError(user, ERR_CSINUSE, "", "unknown"); user.shouldClose = true; user.delayClose = true; return }
             }
+            if (protocol != NEEDREVISION) { sendError(user, ERR_REVISION, "", "unknown"); user.shouldClose = true; user.delayClose = true; return }
             let (verified, actualLevel) = verifyUser(cid, password)
             if (!verified) { sendError(user, ERR_CIDINVALID, cid, "unknown"); user.shouldClose = true; user.delayClose = true; return }
             if (actualLevel <= LEV_SUSPENDED) { sendError(user, ERR_CSSUSPEND, cid, "unknown"); return }
+            // CID 唯一性检查：非 OBS 连接才检查
+            if (!isObserver) {
+                match (getClientByCid(cid)) {
+                    case Some(existing) =>
+                        let exCsLen = Int64(existing.callsign.toRuneArray().size)
+                        if (!(exCsLen > 4 && substrFrom(existing.callsign, exCsLen - 4) == "_OBS")) {
+                            sendError(user, ERR_CSINUSE, "", "unknown")
+                            user.shouldClose = true; user.delayClose = true; return
+                        }
+                    case None => ()
+                }
+            }
             let client = Client(callsign, cid, realname, password, CLIENT_PILOT, actualLevel, protocol)
             client.location = myServer; client.simtype = simtype
-            addClient(client); user.client = client
+            if (!addClient(client)) { sendError(user, ERR_CSINUSE, "", "unknown"); user.shouldClose = true; user.delayClose = true; return }
+            user.client = client
             dolog(L_INFO, "${if (isObserver) { "Observer" } else { "Pilot" }} login: ${callsign} level=${actualLevel}")
             sendAllClientsTo(user)
         }
@@ -390,15 +418,14 @@ public class ClInterface <: NetInterface {
                             }
                             // 在线用户数（排除 OBS）
                             var pilotCount = 0; var atcCount = 0; var obsCount = 0
-                            var cur = rootClient
-                            while (true) { match (cur) { case Some(cl) =>
+                            for (key in clientMap.keys()) {
+                                let cl = clientMap.get(key).getOrThrow()
                                 let csLen = Int64(cl.callsign.toRuneArray().size)
                                 let isObs = (csLen > 4 && substrFrom(cl.callsign, csLen - 4) == "_OBS")
                                 if (isObs) { obsCount += 1 }
                                 else if (cl.isAtc()) { atcCount += 1 }
                                 else { pilotCount += 1 }
-                                cur = cl.next
-                            ; case None => break }}
+                            }
                             user.outStr += "#TMserver:${c.callsign}:在线: ${pilotCount} 机组 / ${atcCount} 管制 / ${obsCount} OBS\r\n"
                         case None => ()
                     }
@@ -423,25 +450,22 @@ public class ClInterface <: NetInterface {
     }
 
     public func sendAllClientsTo(user: ClUser): Unit {
-        var cl = rootClient
-        while (true) { match (cl) {
-            case Some(c) =>
-                match (user.client) {
-                    case Some(myC) =>
-                        if (c.callsign != myC.callsign) {
-                            user.outStr += buildAddClientLine(c)
-                            // 同步飞行计划
-                            match (c.plan) { case Some(fp) => user.outStr += "\$FP${c.callsign}:SERVER:${fp.`type`}:${fp.serialize()}\r\n"; case None => () }
-                            // 同步ATC频率/位置（即使频率为0也发，客户端自行解析）
-                            if (c.isAtc()) {
-                                user.outStr += "%${c.callsign}:${c.frequency}:${c.facilitytype}:${c.visualrange}:${c.rating}:${c.lat}:${c.lon}:${c.altitude}\r\n"
-                            }
+        for (key in clientMap.keys()) {
+            let c = clientMap.get(key).getOrThrow()
+            match (user.client) {
+                case Some(myC) =>
+                    if (c.callsign != myC.callsign) {
+                        user.outStr += buildAddClientLine(c)
+                        // 同步飞行计划
+                        match (c.plan) { case Some(fp) => user.outStr += "\$FP${c.callsign}:SERVER:${fp.`type`}:${fp.serialize()}\r\n"; case None => () }
+                        // 同步ATC频率/位置（即使频率为0也发，客户端自行解析）
+                        if (c.isAtc()) {
+                            user.outStr += "%${c.callsign}:${c.frequency}:${c.facilitytype}:${c.visualrange}:${c.rating}:${c.lat}:${c.lon}:${c.altitude}\r\n"
                         }
-                    case None => ()
-                }
-                cl = c.next
-            case None => break
-        }}
+                    }
+                case None => ()
+            }
+        }
     }
 
     public func routeMessage(from: String, target: String, msg: String): Unit {

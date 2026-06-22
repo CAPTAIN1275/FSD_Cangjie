@@ -56,13 +56,12 @@ public class SysInterface <: NetInterface {
         else if (cmd == "clients") {
             user.outStr += "Call-sign    CID     Online   Type  Server     Frequency\r\n"
             user.outStr += "-----------------------------------------------------------------\r\n"
-            var cl = rootClient
-            while (true) { match (cl) { case Some(c) =>
+            for (key in clientMap.keys()) {
+                let c = clientMap.get(key).getOrThrow()
                 let locId = match (c.location) { case Some(l) => l.ident; case None => "?" }
                 let typeStr = if (c.isAtc()) { "ATC" } else { "PILOT" }
                 user.outStr += "${padRight(c.callsign, 10)}   ${padRight(c.cid, 7)}  ${typeStr} ${padRight(locId, 10)} ${c.frequency}\r\n"
-                cl = c.next
-            ; case None => break }}
+            }
         }
         else if (cmd == "info") {
             user.outStr += "Servers: ${serverCount()}  Clients: ${clientCount()}  Certs: ${certCount()}\r\n"
@@ -223,13 +222,12 @@ public class SysInterface <: NetInterface {
             user.outStr += "Version: ${VERSION}\r\n"
             user.outStr += "Clients: ${clientCount()}  Servers: ${serverCount()}  Certs: ${certCount()}\r\n"
             user.outStr += "--- All Clients ---\r\n"
-            var cl = rootClient
-            while (true) { match (cl) { case Some(c) =>
+            for (key in clientMap.keys()) {
+                let c = clientMap.get(key).getOrThrow()
                 let locId = match (c.location) { case Some(l) => l.ident; case None => "?" }
                 let typeStr = if (c.isAtc()) { "ATC" } else { "PILOT" }
                 user.outStr = user.outStr + "  ${padRight(c.callsign, 12)} ${padRight(typeStr, 6)} lat=${c.lat} lon=${c.lon} alt=${c.altitude} spd=${c.groundspeed} at=${locId}\r\n"
-                cl = c.next
-            ; case None => break }}
+            }
             user.outStr += "--- METAR Cache ---\r\n"
             match (metarManager) {
                 case Some(mm) => user.outStr += "  See 'wp list' for weather profiles\r\n"
@@ -253,14 +251,11 @@ public class SysInterface <: NetInterface {
             user.outStr += "Shutting down FSD...\r\n"
             user.socket.close()
             // 给所有客户端发 #DA/#DP 断开协议
-            var cl = rootClient
-            while (true) { match (cl) {
-                case Some(c) =>
-                    clientInterface?.sendRemoveClient(c)
-                    dolog(L_INFO, "Sending disconnect to ${c.callsign}")
-                    cl = c.next
-                case None => break
-            }}
+            for (key in clientMap.keys()) {
+                let c = clientMap.get(key).getOrThrow()
+                clientInterface?.sendRemoveClient(c)
+                dolog(L_INFO, "Sending disconnect to ${c.callsign}")
+            }
             sleep(100 * Duration.millisecond)
             fsdEngine?.stop()
         }

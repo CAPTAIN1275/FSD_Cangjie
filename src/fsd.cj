@@ -173,7 +173,15 @@ public class FsdEngine {
     }
 
     public func run(): Int32 {
-        configMan?.run(); let now = mgmtime()
+        configMan?.run()
+        // 每次循环重新读取禁止航班号（支持热重载）
+        match (configMan) { case Some(cm) => match (cm.getGroup("system")) {
+            case Some(g) =>
+                let bf = match (g.getEntry("blocked_flights")) { case Some(e) => e.getData(); case None => "" }
+                blockedFlights = bf
+            case None => ()
+        }; case None => () }
+        let now = mgmtime()
         if (now != this.timer) { this.timer = now; doChecks() }
         clientInterface?.run(); serverInterface?.run(); systemInterface?.run()
         return 0
@@ -187,12 +195,10 @@ public class FsdEngine {
         if ((now - this.prevWhazzup) >= WHAZZUPCHECK) { writeWhazzUp(); this.prevWhazzup = now }
         if ((now - this.prevHeartbeat) >= 3600) {
             this.prevHeartbeat = now
-            var clientCount: Int64 = 0
-            var cur = rootClient
-            while (true) { match (cur) { case Some(c) => clientCount += 1; cur = c.next; case None => break } }
+            let cc = clientCount()
             match (myServer) {
                 case Some(s) =>
-                    let url = "https://system.ldpfly.cn/api/fsd_ping.php?host=${s.hostname}&clients=${clientCount}"
+                    let url = "https://system.ldpfly.cn/api/fsd_ping.php?host=${s.hostname}&clients=${cc}"
                     try {
                         let (code, _, _) = executeWithOutput("curl", ["-s", "--connect-timeout", "5", "--max-time", "10", url])
                         if (code != 0) { dolog(L_WARNING, "Heartbeat failed: ${code}") }
@@ -205,17 +211,14 @@ public class FsdEngine {
             this.prevWindDelta = now
             let ts = sprintGmt(now)
             // 为每个在线客户端生成随机风数据
-            var cl = rootClient
-            while (true) { match (cl) {
-                case Some(c) =>
-                    let wd = randInt(360)
-                    let ws = randInt(50)
-                    let wg = if (randInt(10) > 3) { randInt(30) } else { 0 }
-                    let msg = "#DL${c.callsign}:${ts}:${wd}:${ws}:${wg}\r\n"
-                    clientInterface?.broadcastToAll(msg)
-                    cl = c.next
-                case None => break
-            }}
+            for (key in clientMap.keys()) {
+                let c = clientMap.get(key).getOrThrow()
+                let wd = randInt(360)
+                let ws = randInt(50)
+                let wg = if (randInt(10) > 3) { randInt(30) } else { 0 }
+                let msg = "#DL${c.callsign}:${ts}:${wd}:${ws}:${wg}\r\n"
+                clientInterface?.broadcastToAll(msg)
+            }
         }
         // 飞行记录刷盘（每 10 秒）
         if (replayBuf != "") {
@@ -240,10 +243,20 @@ public class FsdEngine {
     public func checkClientTimeouts(now: Int64): Unit {
         let isSilent = match (myServer) { case Some(s) => s.isSilent(); case None => false }
         let limit = if (isSilent) { SILENTCLIENTTIMEOUT } else { CLIENTTIMEOUT }
-        var cur = rootClient
-        while (true) { match (cur) { case Some(cl) => let nx = cl.next
-            if (!clLocal(cl) && (now - cl.alive) > limit) { dolog(L_INFO, "Cli timeout: ${cl.callsign}"); removeClient(cl) }; cur = nx
-        ; case None => break }}
+        var toRemove = ArrayList<String>()
+        for (key in clientMap.keys()) {
+            let cl = clientMap.get(key).getOrThrow()
+            if (!clLocal(cl) && (now - cl.alive) > limit) {
+                dolog(L_INFO, "Cli timeout: ${cl.callsign}")
+                toRemove.add(cl.callsign.toUpper())
+            }
+        }
+        for (cs in toRemove) {
+            match (clientMap.get(cs)) {
+                case Some(c) => removeClient(c)
+                case None => ()
+            }
+        }
     }
 
     public func writeWhazzUp(): Unit {
@@ -260,8 +273,8 @@ public class FsdEngine {
                 wz.append("CONNECTED CLIENTS = ${clCount}\n")
                 wz.append("CONNECTED SERVERS = ${svCount}\n")
                 wz.append("!CLIENTS\n")
-                var cl = rootClient
-                while (true) { match (cl) { case Some(c) =>
+                for (key in clientMap.keys()) {
+                    let c = clientMap.get(key).getOrThrow()
                     // dataseg1: callsign:cid:realname:type
                     wz.append("${c.callsign}:${c.cid}:${c.realname}:${if (c.isAtc()) {"ATC"} else {"PILOT"}}")
                     // dataseg2: frequency (ATC only, format: :1xx.xxx)
@@ -292,8 +305,7 @@ public class FsdEngine {
                     }
                     // dataseg7: starttime:heading(从位置计算)
                     wz.append("::::::${sprintGmt(c.startTime)}:HDG${Int64(c.headingCalc)}\n")
-                    cl = c.next
-                ; case None => break }}
+                }
                 wz.append("!SERVERS\n")
                 var sv = rootServer
                 while (true) { match (sv) { case Some(srv) =>

@@ -168,12 +168,11 @@ public class ServUser <: NetUser {
             sv = s.next
         ; case None => break }}
         // 发送所有客户端
-        var cl = rootClient
-        while (true) { match (cl) { case Some(c) =>
+        for (key in clientMap.keys()) {
+            let c = clientMap.get(key).getOrThrow()
             if (clLocal(c)) { this.iface.sendAddClient("*", c, None) }
             match (c.plan) { case Some(_) => this.iface.sendPlan("*", c, None); case None => () }
-            cl = c.next
-        ; case None => break }}
+        }
         // 发送所有证�?
         var cert = rootCert
         while (true) { match (cert) { case Some(c) =>

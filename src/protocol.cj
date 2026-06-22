@@ -14,6 +14,7 @@ let ERR_REVISION: Int32 = 10
 let ERR_LEVEL: Int32 = 11
 let ERR_SERVFULL: Int32 = 12
 let ERR_CSSUSPEND: Int32 = 13
+let ERR_CIDINUSE: Int32 = 14
 
 let CMD_NOTIFY: Int32 = 0; let CMD_REQMETAR: Int32 = 1; let CMD_PING: Int32 = 2
 let CMD_PONG: Int32 = 3; let CMD_SYNC: Int32 = 4; let CMD_LINKDOWN: Int32 = 5
@@ -41,5 +42,6 @@ func errStr(code: Int32): String {
     if (code == ERR_LEVEL) { return "Requested level too high" }
     if (code == ERR_SERVFULL) { return "No more clients" }
     if (code == ERR_CSSUSPEND) { return "CID suspended" }
+    if (code == ERR_CIDINUSE) { return "CID already in use" }
     return "Unknown error"
 }
