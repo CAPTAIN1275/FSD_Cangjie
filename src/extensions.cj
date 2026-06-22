@@ -84,17 +84,27 @@ func splitStr(s: String, sep: String): Array<String> {
 }
 
 func parseInt32(s: String): Int32 {
+    let MAX_DIV10: Int32 = 214748364  // Int32.MAX / 10
     var result: Int32 = 0
     for (ch in s.toRuneArray()) {
-        if (ch >= r'0' && ch <= r'9') { result = result * 10 + runeToDigit(ch) }
+        if (ch >= r'0' && ch <= r'9') {
+            let d = runeToDigit(ch)
+            if (result > MAX_DIV10) { return 2147483647 }  // 溢出时返回 MAX
+            result = result * 10 + d
+        }
     }
     return result
 }
 
 func parseInt64(s: String): Int64 {
+    let MAX_DIV10: Int64 = 922337203685477580  // Int64.MAX / 10
     var result: Int64 = 0
     for (ch in s.toRuneArray()) {
-        if (ch >= r'0' && ch <= r'9') { result = result * 10 + Int64(runeToDigit(ch)) }
+        if (ch >= r'0' && ch <= r'9') {
+            let d = Int64(runeToDigit(ch))
+            if (result > MAX_DIV10) { return 9223372036854775807 }  // 溢出时返回 MAX
+            result = result * 10 + d
+        }
     }
     return result
 }

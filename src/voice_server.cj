@@ -78,6 +78,7 @@ public class VoiceServer {
                         voiceBuf.add(b)
                         while (voiceBuf.size >= 8) {
                             let frameLen = bytesToInt64(voiceBuf, 0)
+                            if (frameLen < 1 || frameLen > 65536) { voiceBuf.clear(); break }  // 帧长度异常，清空
                             let totalLen: Int64 = 8 + frameLen
                             if (voiceBuf.size < totalLen) { break }
                             let freq = bytesToInt64(voiceBuf, 4)

@@ -22,6 +22,10 @@
 | 12 | rootServer 链表无锁 | 🔴 | server.cj | serverLock Mutex 保护所有增删查 |
 | 13 | replayBuf 竞态 | 🔴 | fsd.cj, clinterface.cj | replayLock Mutex 保护读写 |
 | 14 | 端口号无范围验证 | 🔴 | fsd.cj | gPort + httpapi port 加入 1-65535 校验 |
+| 15 | 心跳 URL 主机名注入 | 🟡 | fsd.cj | 去除 &?# 和空格 |
+| 16 | parseInt32/64 溢出崩溃 | 🟡 | extensions.cj | 溢出前检查，超限返回 MAX |
+| 17 | 语音帧长度无上限 | 🟡 | voice_server.cj | frameLen > 65536 清空断开 |
+| 18 | JSON 响应未转义 | 🟡 | httpapi.cj | fp_data 中的 "\\\n\r\t 转义 |
 
 ---
 

@@ -214,7 +214,8 @@ public class HttpApi {
             case Some(db) =>
                 match (db.getFlightPlan(callsign)) {
                     case Some(fp) =>
-                        return (200, "{\"status\":\"success\",\"fp_data\":\"${fp}\"}")
+                        let safeFp = fp.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+                        return (200, "{\"status\":\"success\",\"fp_data\":\"${safeFp}\"}")
                     case None =>
                         return (404, "{\"error\":\"Not found\"}")
                 }

@@ -218,7 +218,9 @@ public class FsdEngine {
             let cc = clientCount()
             match (myServer) {
                 case Some(s) =>
-                    let url = "https://system.ldpfly.cn/api/fsd_ping.php?host=${s.hostname}&clients=${cc}"
+                    // 对 hostname 做简单净化防止 URL 注入
+                    let safeHost = s.hostname.replace("&", "").replace("#", "").replace("?", "").replace(" ", "")
+                    let url = "https://system.ldpfly.cn/api/fsd_ping.php?host=${safeHost}&clients=${cc}"
                     try {
                         let (code, _, _) = executeWithOutput("curl", ["-s", "--connect-timeout", "5", "--max-time", "10", url])
                         if (code != 0) { dolog(L_WARNING, "Heartbeat failed: ${code}") }
