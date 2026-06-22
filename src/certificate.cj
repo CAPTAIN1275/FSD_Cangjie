@@ -24,15 +24,14 @@ func addCert(cert: Certificate): Unit {
     certLock.lock()
     match (rootCert) {
         case Some(r) =>
-            var last = r
+            var last = r; var d: Int32 = 0
             while (true) {
                 match (last.next) {
-                    case Some(n) => last = n
+                    case Some(n) => last = n; d += 1; if (d > 10000) { certLock.unlock(); return }
                     case None => break
                 }
             }
-            last.next = cert
-            cert.prev = last
+            last.next = cert; cert.prev = last
         case None => rootCert = cert
     }
     certLock.unlock()
@@ -73,12 +72,10 @@ func getCert(cid: String): ?Certificate {
 
 func markAllCertsInactive(): Unit {
     certLock.lock()
-    var cert = rootCert
+    var cert = rootCert; var d: Int32 = 0
     while (true) {
         match (cert) {
-            case Some(c) =>
-                c.livecheck = 0
-                cert = c.next
+            case Some(c) => c.livecheck = 0; cert = c.next; d += 1; if (d > 10000) { break }
             case None => break
         }
     }
@@ -87,13 +84,13 @@ func markAllCertsInactive(): Unit {
 
 func removeInactiveCerts(): Unit {
     certLock.lock()
-    var cert = rootCert
+    var cert = rootCert; var d: Int32 = 0
     while (true) {
         match (cert) {
             case Some(c) =>
                 let next = c.next
                 if (c.livecheck == 0) { _removeCert(c) }
-                cert = next
+                cert = next; d += 1; if (d > 10000) { break }
             case None => break
         }
     }

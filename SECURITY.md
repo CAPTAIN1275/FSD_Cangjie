@@ -30,6 +30,10 @@
 | 20 | stats.txt 竞争条件 | 🟢 | clinterface.cj | statsLock Mutex 保护 |
 | 21 | 主循环无异常保护 | 🟢 | main.cj | try-catch 包裹 engine.run() |
 | 22 | replayBuf 无大小限制 | 🟢 | clinterface.cj | 限制最大 1MB |
+| 23 | KILL 来源不可信 | 🟡 | servinterface.cj | 仅接受已知服务器的 KILL |
+| 24 | 证书同步来源不可信 | 🟡 | servinterface.cj | 仅接受已知服务器的 CERT |
+| 25 | API 密钥 URL 明文传输 | 🟡 | httpapi.cj | 同时支持 Authorization: Bearer 头 |
+| 26 | 语音 JSON 解析缺陷 | 🟢 | voice_server.cj | 支持空格/转义引号/值限长 512 |
 
 ---
 
