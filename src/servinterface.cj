@@ -177,8 +177,9 @@ public class ServUser <: NetUser {
         ; case None => break }}
         // 发送所有客户端
         var clientSent = 0
-        for (key in clientMap.keys()) {
-            let c = clientMap.get(key).getOrThrow()
+        let _keys = getClientKeys()
+        for (_i in 0.._keys.size) {
+            let c = clientMap.get(_keys[_i]).getOrThrow()
             if (clLocal(c)) { this.iface.sendAddClient("*", c, None); clientSent += 1 }
             match (c.plan) { case Some(_) => this.iface.sendPlan("*", c, None); case None => () }
         }

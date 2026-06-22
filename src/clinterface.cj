@@ -429,8 +429,9 @@ public class ClInterface <: NetInterface {
                             }
                             // 在线用户数（排除 OBS）
                             var pilotCount = 0; var atcCount = 0; var obsCount = 0
-                            for (key in clientMap.keys()) {
-                                let cl = clientMap.get(key).getOrThrow()
+                            let _keys = getClientKeys()
+                            for (_i in 0.._keys.size) {
+                                let cl = clientMap.get(_keys[_i]).getOrThrow()
                                 let csLen = Int64(cl.callsign.toRuneArray().size)
                                 let isObs = (csLen > 4 && substrFrom(cl.callsign, csLen - 4) == "_OBS")
                                 if (isObs) { obsCount += 1 }
@@ -461,8 +462,9 @@ public class ClInterface <: NetInterface {
     }
 
     public func sendAllClientsTo(user: ClUser): Unit {
-        for (key in clientMap.keys()) {
-            let c = clientMap.get(key).getOrThrow()
+        let _keys = getClientKeys()
+        for (_i in 0.._keys.size) {
+            let c = clientMap.get(_keys[_i]).getOrThrow()
             match (user.client) {
                 case Some(myC) =>
                     if (c.callsign != myC.callsign) {

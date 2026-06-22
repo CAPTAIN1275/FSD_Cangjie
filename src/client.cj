@@ -1,10 +1,11 @@
 package FSD_Cangjie
 
 import std.collection.*
+import std.sync.*
 
 var clientMap = HashMap<String, Client>()
-// CID→呼号 索引，用于 O(1) CID 查找
 var cidIndex = HashMap<String, String>()
+var clientLock = Mutex()
 
 public class Client {
     var callsign: String; var cid: String; var realname: String
@@ -46,36 +47,59 @@ public class Client {
     }
 }
 
-// O(1) HashMap 替代 O(n) 链表
+// O(1) HashMap 替代 O(n) 链表（Mutex 保护并发安全）
 func addClient(c: Client): Bool {
     let key = c.callsign.toUpper()
+    clientLock.lock()
     match (clientMap.get(key)) {
-        case Some(_) => return false
+        case Some(_) => clientLock.unlock(); return false
         case None => ()
     }
-    if (clientCount() >= Int64(MAX_CLIENTS)) { return false }
+    if (clientMap.size >= Int64(MAX_CLIENTS)) { clientLock.unlock(); return false }
     clientMap[key] = c
     cidIndex[c.cid] = key
+    clientLock.unlock()
     return true
 }
 
 func removeClient(c: Client): Unit {
+    clientLock.lock()
     clientMap.remove(c.callsign.toUpper())
     cidIndex.remove(c.cid)
+    clientLock.unlock()
 }
 
 func getClient(callsign: String): ?Client {
-    return clientMap.get(callsign.toUpper())
+    clientLock.lock()
+    let r = clientMap.get(callsign.toUpper())
+    clientLock.unlock()
+    return r
 }
 
 // O(1) CID 查找（通过 cidIndex）
 func getClientByCid(cid: String): ?Client {
+    clientLock.lock()
+    var r: ?Client = None
     match (cidIndex.get(cid)) {
-        case Some(cs) => return clientMap.get(cs)
-        case None => return None
+        case Some(cs) => r = clientMap.get(cs)
+        case None => ()
     }
+    clientLock.unlock()
+    return r
 }
 
 func clientCount(): Int64 {
-    return clientMap.size
+    clientLock.lock()
+    let n = clientMap.size
+    clientLock.unlock()
+    return n
+}
+
+// 安全遍历：获取所有 key 的快照（主循环遍历用）
+func getClientKeys(): ArrayList<String> {
+    clientLock.lock()
+    let keys = ArrayList<String>()
+    for (k in clientMap.keys()) { keys.add(k) }
+    clientLock.unlock()
+    return keys
 }

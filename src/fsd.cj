@@ -225,8 +225,9 @@ public class FsdEngine {
             this.prevWindDelta = now
             let ts = sprintGmt(now)
             // 为每个在线客户端生成随机风数据
-            for (key in clientMap.keys()) {
-                let c = clientMap.get(key).getOrThrow()
+            let _keys = getClientKeys()
+            for (_i in 0.._keys.size) {
+                let c = clientMap.get(_keys[_i]).getOrThrow()
                 let wd = randInt(360)
                 let ws = randInt(50)
                 let wg = if (randInt(10) > 3) { randInt(30) } else { 0 }
@@ -258,8 +259,9 @@ public class FsdEngine {
         let isSilent = match (myServer) { case Some(s) => s.isSilent(); case None => false }
         let limit = if (isSilent) { SILENTCLIENTTIMEOUT } else { CLIENTTIMEOUT }
         var toRemove = ArrayList<String>()
-        for (key in clientMap.keys()) {
-            let cl = clientMap.get(key).getOrThrow()
+        let _keys = getClientKeys()
+        for (_i in 0.._keys.size) {
+            let cl = clientMap.get(_keys[_i]).getOrThrow()
             if (!clLocal(cl) && (now - cl.alive) > limit) {
                 dolog(L_INFO, "Cli timeout: ${cl.callsign}")
                 toRemove.add(cl.callsign.toUpper())
@@ -287,8 +289,9 @@ public class FsdEngine {
                 wz.append("CONNECTED CLIENTS = ${clCount}\n")
                 wz.append("CONNECTED SERVERS = ${svCount}\n")
                 wz.append("!CLIENTS\n")
-                for (key in clientMap.keys()) {
-                    let c = clientMap.get(key).getOrThrow()
+                let _keys = getClientKeys()
+                for (_i in 0.._keys.size) {
+                    let c = clientMap.get(_keys[_i]).getOrThrow()
                     // dataseg1: callsign:cid:realname:type
                     wz.append("${c.callsign}:${c.cid}:${c.realname}:${if (c.isAtc()) {"ATC"} else {"PILOT"}}")
                     // dataseg2: frequency (ATC only, format: :1xx.xxx)
