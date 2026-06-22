@@ -407,7 +407,7 @@ public class ServUser <: NetUser {
             return true
         }
         if (cmd == CMD_PLAN) {
-            if (parts.size < 21) { return false }
+            if (parts.size < 22) { return false }
             match (getClient(parts[5])) { case Some(c) =>
                 let fp = FlightPlan()
                 fp.callsign = c.callsign; fp.revision = parseInt32(parts[6])
@@ -452,11 +452,12 @@ public class ServUser <: NetUser {
             return true
         }
         if (cmd == CMD_REQMETAR) {
+            if (parts.size < 9) { return true }
             match (metarManager) { case Some(mm) => mm.requestMetar(parts[5], parts[6], parseInt32(parts[7]), parseInt32(parts[8])); case None => () }
             return true
         }
         if (cmd == CMD_KILL) {
-            if (parts.size < 6) { return true }
+            if (parts.size < 7) { return true }
             match (fromSvr) {
                 case Some(s) =>
                     dolog(L_INFO, "KILL from ${s.ident}: ${parts[4]} reason=${parts[5]}")
