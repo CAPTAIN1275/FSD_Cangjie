@@ -83,7 +83,18 @@ public class HttpApi {
             // 获取客户端 IP（空字符串，因为 Cangjie 无法获取）
             let remoteIp = "unknown"
 
-            let (statusCode, contentType, body) = handleRequest(method, path, query, remoteIp)
+            // 从请求头中提取 Authorization: Bearer xxx（合入 query 统一验证）
+            var authKey = ""
+            for (hi in 1..lines.size) {
+                let h = lines[Int64(hi)]
+                if (h.startsWith("Authorization: Bearer ")) {
+                    authKey = substrFrom(h, 21)
+                    break
+                }
+            }
+            let finalQuery = if (authKey != "") { query + "&key=" + authKey } else { query }
+
+            let (statusCode, contentType, body) = handleRequest(method, path, finalQuery, remoteIp)
             let response = "HTTP/1.1 ${statusCode} ${statusText(statusCode)}\r\n" +
                 "Content-Type: ${contentType}\r\n" +
                 "Access-Control-Allow-Origin: *\r\n" +

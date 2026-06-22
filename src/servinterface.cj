@@ -413,6 +413,10 @@ public class ServUser <: NetUser {
         }
         if (cmd == CMD_CERT) {
             if (parts.size < 11) { return false }
+            match (fromSvr) {
+                case None => dolog(L_WARNING, "CERT rejected from unknown server"); return true
+                case Some(s) => ()
+            }
             let mode = parseInt32(parts[5]); let cid = parts[6]; let pwd = parts[7]
             let level = parseInt32(parts[8]); let created = parseInt64(parts[9])
             let origin = parts[10]
@@ -441,11 +445,14 @@ public class ServUser <: NetUser {
         }
         if (cmd == CMD_KILL) {
             if (parts.size < 6) { return true }
-            let fromIdent = match (fromSvr) { case Some(s) => s.ident; case None => "?" }
-            dolog(L_INFO, "KILL from ${fromIdent}: ${parts[4]} reason=${parts[5]}")
-            match (getClient(parts[5])) { case Some(c) =>
-                clientInterface?.sendKillClient(c, parts[6])
-            ; case None => () }
+            match (fromSvr) {
+                case Some(s) =>
+                    dolog(L_INFO, "KILL from ${s.ident}: ${parts[4]} reason=${parts[5]}")
+                    match (getClient(parts[5])) { case Some(c) =>
+                        clientInterface?.sendKillClient(c, parts[6])
+                    ; case None => () }
+                case None => dolog(L_WARNING, "KILL rejected from unknown server")
+            }
             return true
         }
         if (cmd == CMD_RESET) {

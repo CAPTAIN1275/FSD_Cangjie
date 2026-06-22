@@ -132,17 +132,28 @@ public class VoiceServer {
     }
 
     private func jsonExtract(raw: String, key: String): String {
-        let search = "\"${key}\":\""
+        let search = "\"${key}\":"
         let rs = raw.toRuneArray(); let sr = search.toRuneArray()
         if (sr.size > rs.size) { return "" }
         for (i in 0..(rs.size - sr.size)) {
             var ok = true
             for (j in 0..sr.size) { if (rs[i + j] != sr[j]) { ok = false; break } }
             if (ok) {
+                // 跳过空格
+                var pos = i + Int64(sr.size)
+                while (pos < rs.size && rs[pos] == r' ') { pos += 1 }
+                // 必须跟引号
+                if (pos >= rs.size || rs[pos] != r'\"') { return "" }
+                pos += 1
+                // 提取值直到遇到未转义的引号
                 var r = ""
-                for (k in (i + Int64(sr.size))..rs.size) {
-                    if (rs[k] == r'\"') { break }
-                    r += charStr(rs[k])
+                while (pos < rs.size) {
+                    if (rs[pos] == r'\\') {  // 转义序列
+                        pos += 1
+                        if (pos < rs.size) { r += charStr(rs[pos]); pos += 1 }
+                    } else if (rs[pos] == r'\"') { break }
+                    else { r += charStr(rs[pos]); pos += 1 }
+                    if (r.toRuneArray().size > 512) { return "" }  // 防止超长值
                 }
                 return r
             }

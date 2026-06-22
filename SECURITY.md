@@ -26,6 +26,10 @@
 | 16 | parseInt32/64 溢出崩溃 | 🟡 | extensions.cj | 溢出前检查，超限返回 MAX |
 | 17 | 语音帧长度无上限 | 🟡 | voice_server.cj | frameLen > 65536 清空断开 |
 | 18 | JSON 响应未转义 | 🟡 | httpapi.cj | fp_data 中的 "\\\n\r\t 转义 |
+| 19 | 系统端口密码暴破 | 🟡 | sysinterface.cj | 密码错误加 1 秒延迟 |
+| 20 | stats.txt 竞争条件 | 🟢 | clinterface.cj | statsLock Mutex 保护 |
+| 21 | 主循环无异常保护 | 🟢 | main.cj | try-catch 包裹 engine.run() |
+| 22 | replayBuf 无大小限制 | 🟢 | clinterface.cj | 限制最大 1MB |
 
 ---
 
