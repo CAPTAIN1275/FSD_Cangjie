@@ -265,10 +265,10 @@ public class ClInterface <: NetInterface {
             if (posHeading > 0.0) { finalHeading = posHeading }
             c.headingCalc = finalHeading
             // 飞行记录（缓冲到全局 replayBuf，定时刷盘）
-            try {
-                let ts = sprintGmt(mgmtime())
-                replayBuf += "${ts} ${c.callsign} ${c.lat} ${c.lon} ${c.altitude} ${Int64(finalHeading)} ${c.groundspeed}\n"
-            } catch (_: Exception) {}
+            let ts = sprintGmt(mgmtime())
+            replayLock.lock()
+            replayBuf += "${ts} ${c.callsign} ${c.lat} ${c.lon} ${c.altitude} ${Int64(finalHeading)} ${c.groundspeed}\n"
+            replayLock.unlock()
             broadcastToClients(line + "\r\n", c.callsign)
         ; case None => () }
     }

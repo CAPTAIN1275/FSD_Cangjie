@@ -1,9 +1,11 @@
 package FSD_Cangjie
 
 import std.collection.*
+import std.sync.*
 
 var rootServer: ?Server = None
 var myServer: ?Server = None
+var serverLock = Mutex()
 
 public class Server {
     var ident: String; var name: String; var email: String
@@ -41,6 +43,7 @@ public class ServerRoute {
 }
 
 func addServer(s: Server): Unit {
+    serverLock.lock()
     match (rootServer) {
         case Some(r) =>
             var last = r
@@ -53,9 +56,11 @@ func addServer(s: Server): Unit {
             last.next = s; s.prev = last
         case None => rootServer = s
     }
+    serverLock.unlock()
 }
 
 func removeServer(s: Server): Unit {
+    serverLock.lock()
     match (s.prev) {
         case Some(p) => p.next = s.next
         case None => rootServer = s.next
@@ -64,30 +69,35 @@ func removeServer(s: Server): Unit {
         case Some(n) => n.prev = s.prev
         case None => ()
     }
+    serverLock.unlock()
 }
 
 func getServer(ident: String): ?Server {
+    serverLock.lock()
+    var r: ?Server = None
     var cur = rootServer
     while (true) {
         match (cur) {
             case Some(sv) =>
-                if (sv.ident == ident) { return cur }
+                if (sv.ident == ident) { r = cur; break }
                 cur = sv.next
             case None => break
         }
     }
-    return None
+    serverLock.unlock()
+    return r
 }
 
-func serverCount(): Int32 {
-    var count: Int32 = 0
+func serverCount(): Int64 {
+    serverLock.lock()
+    var count: Int64 = 0
     var cur = rootServer
     while (true) {
         match (cur) {
-            case Some(sv) =>
-                count += 1; cur = sv.next
+            case Some(sv) => count += 1; cur = sv.next
             case None => break
         }
     }
+    serverLock.unlock()
     return count
 }

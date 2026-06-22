@@ -18,26 +18,16 @@
 | 8 | KILL 无审计 | 🟡 | servinterface.cj | 加日志记录来源(KILL偏移bug一并修复) |
 | 9 | whazzup 写入太快 | 🟢 | global.cj | 改回 2 秒 |
 | 10 | clientMap/cidIndex 无锁 | 🔴 | client.cj | Mutex 保护所有读写 + getClientKeys() 快照遍历 |
+| 11 | rootCert 链表无锁 | 🔴 | certificate.cj | certLock Mutex 保护所有增删查 |
+| 12 | rootServer 链表无锁 | 🔴 | server.cj | serverLock Mutex 保护所有增删查 |
+| 13 | replayBuf 竞态 | 🔴 | fsd.cj, clinterface.cj | replayLock Mutex 保护读写 |
+| 14 | 端口号无范围验证 | 🔴 | fsd.cj | gPort + httpapi port 加入 1-65535 校验 |
 
 ---
 
 ## 🔴 严重（未修复）
 
-### #10 — rootCert 链表无锁
-- **文件**: certificate.cj / servinterface.cj / sysinterface.cj
-- **风险**: 多线程同时修改链表指针 → use-after-free / 无限循环
-
-### #11 — rootServer 链表无锁
-- **文件**: server.cj / servinterface.cj / fsd.cj
-- **风险**: 同上
-
-### #12 — replayBuf 全局变量竞态
-- **文件**: fsd.cj / clinterface.cj
-- **风险**: 位置数据写入时主线程在读，可能丢数据 / 错乱
-
-### #13 — 端口号无范围验证
-- **文件**: fsd.cj / httpapi.cj / voice_server.cj
-- **风险**: 配置 port=70000 静默截断为 4464
+（已全部修复 ✅）
 
 ---
 

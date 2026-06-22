@@ -3,6 +3,7 @@
 import std.fs.*
 import std.process.*
 import std.collection.*
+import std.sync.*
 
 var clientInterface: ?ClInterface = None
 var serverInterface: ?ServInterface = None
@@ -11,6 +12,7 @@ var configMan: ?ConfigManager = None
 var metarManager: ?MetarManager = None
 var fsdEngine: ?FsdEngine = None
 var replayBuf: String = ""
+var replayLock = Mutex()
 var blockedFlights: String = ""  // 禁止连飞的航班号逗号分隔
 
 public class FsdEngine {
@@ -108,7 +110,11 @@ public class FsdEngine {
         match (configMan) { case Some(cm) => match (cm.getGroup("httpapi")) {
             case Some(g) =>
                 let en = match (g.getEntry("enabled")) { case Some(e) => e.getData() == "true" || e.getData() == "1"; case None => false }
-                let ap: Int32 = match (g.getEntry("port")) { case Some(e) => e.getInt(); case None => DEFAULT_HTTP_API_PORT }
+                let ap: Int32 = match (g.getEntry("port")) { case Some(e) =>
+                    let v = e.getInt()
+                    if (v < 1 || v > 65535) { dolog(L_WARNING, "Invalid httpapi port ${v}, using default ${DEFAULT_HTTP_API_PORT}"); DEFAULT_HTTP_API_PORT }
+                    else { v }
+                case None => DEFAULT_HTTP_API_PORT }
                 let ak = match (g.getEntry("key")) { case Some(e) => e.getData(); case None => "" }
                 if (en) { let api = HttpApi(ap, ak); api.start(); dolog(L_INFO, "HTTP API on port ${ap}" + if (ak != "") { " (key protected)" } else { " (no auth!)" }) }
             case None => ()
@@ -236,6 +242,7 @@ public class FsdEngine {
             }
         }
         // 飞行记录刷盘（每 10 秒）
+        replayLock.lock()
         if (replayBuf != "") {
             let dateStr = sprintGmtDate(mgmtime())
             var existing = ""
@@ -245,6 +252,7 @@ public class FsdEngine {
                 replayBuf = ""
             } catch (_: Exception) {}
         }
+        replayLock.unlock()
         checkServerTimeouts(now); checkClientTimeouts(now)
     }
 
@@ -337,7 +345,15 @@ public class FsdEngine {
 }
 
 func gStr(group: ConfigGroup, key: String, def: String): String { match (group.getEntry(key)) { case Some(e) => e.getData(); case None => def } }
-func gPort(group: ConfigGroup, key: String, def: Int32): Int32 { match (group.getEntry(key)) { case Some(e) => e.getInt(); case None => def } }
+func gPort(group: ConfigGroup, key: String, def: Int32): Int32 {
+    match (group.getEntry(key)) {
+        case Some(e) =>
+            let v = e.getInt()
+            if (v < 1 || v > 65535) { dolog(L_WARNING, "Invalid port ${v} for ${key}, using default ${def}"); return def }
+            return v
+        case None => return def
+    }
+}
 func dbOk(): Bool { match (gMysql) { case Some(db) => db.isConnected(); case None => false } }
 func svMy(sv: Server): Bool { match (myServer) { case Some(m) => sv.ident == m.ident; case None => false } }
 func clLocal(cl: Client): Bool { match (cl.location) { case Some(loc) => loc.ident == (myServer?.ident ?? ""); case None => false } }

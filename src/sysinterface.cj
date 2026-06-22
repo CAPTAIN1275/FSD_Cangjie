@@ -284,12 +284,6 @@ public class SysUser <: NetUser {
 }
 
 // svMy 定义在 fsd.cj，此处不重复
-func certCount(): Int32 {
-    var count: Int32 = 0; var cur = rootCert
-            while (true) { match (cur) { case Some(c) => count += 1; cur = c.next; case None => break } }
-    return count
-}
-
 func padRight(s: String, width: Int32): String {
     let runes = s.toRuneArray()
     if (Int32(runes.size) >= width) { return s }
