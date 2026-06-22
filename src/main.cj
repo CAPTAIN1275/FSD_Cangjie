@@ -14,7 +14,12 @@ main(): Int64 {
     dolog(L_INFO, "Entering main loop on ports: client=${engine.clientPort}, server=${engine.serverPort}, system=${engine.systemPort}")
 
     while (true) {
-        engine.run()
+        try {
+            engine.run()
+        } catch (e: Exception) {
+            dolog(L_ERR, "Main loop error: ${e}")
+            sleep(1000 * Duration.millisecond)
+        }
         sleep(10 * Duration.millisecond)
     }
     return 0

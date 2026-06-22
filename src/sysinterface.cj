@@ -40,7 +40,7 @@ public class SysInterface <: NetInterface {
                 }
             }
             if (authed) { user.isPrivileged = true; user.outStr += "Password correct\r\n" }
-            if (!authed) { user.outStr += "Password incorrect\r\n" }
+            if (!authed) { user.outStr += "Password incorrect\r\n"; sleep(1000 * Duration.millisecond) }
         }
         // ---- 需要认证 ----
         else if (!user.isPrivileged) { user.outStr += "Not authorized. Use 'pwd <password>'.\r\n" }

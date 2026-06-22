@@ -8,6 +8,9 @@ import std.net.*
 import std.fs.*
 import std.collection.*
 import std.time.*
+import std.sync.*
+
+var statsLock = Mutex()
 
 public class ClInterface <: NetInterface {
     var allowList: ArrayList<String>
@@ -267,7 +270,9 @@ public class ClInterface <: NetInterface {
             // 飞行记录（缓冲到全局 replayBuf，定时刷盘）
             let ts = sprintGmt(mgmtime())
             replayLock.lock()
-            replayBuf += "${ts} ${c.callsign} ${c.lat} ${c.lon} ${c.altitude} ${Int64(finalHeading)} ${c.groundspeed}\n"
+            if (replayBuf.size < 1048576) {  // 限制最大 1MB
+                replayBuf += "${ts} ${c.callsign} ${c.lat} ${c.lon} ${c.altitude} ${Int64(finalHeading)} ${c.groundspeed}\n"
+            }
             replayLock.unlock()
             broadcastToClients(line + "\r\n", c.callsign)
         ; case None => () }
@@ -654,6 +659,7 @@ public class ClUser <: NetUser {
                 let csLen = Int64(c.callsign.toRuneArray().size)
                 let isObs = (csLen > 4 && substrFrom(c.callsign, csLen - 4) == "_OBS")
                 if (!isObs && durationMin > 0) {
+                    statsLock.lock()
                     try {
                         let line = "${c.cid}:${c.callsign}:${mgmtime()}:${ctype}:${durationMin}\n"
                         var content = line
@@ -663,6 +669,7 @@ public class ClUser <: NetUser {
                     } catch (e: Exception) {
                         dolog(L_ERR, "Stats write error: ${e}")
                     }
+                    statsLock.unlock()
                 }
                 serverInterface?.sendRmClient("*", c.callsign, None); removeClient(c); this.iface.sendRemoveClient(c); fsdEngine?.writeWhazzUp()
             case None => ()
@@ -718,6 +725,7 @@ public class ClUser <: NetUser {
                 let csLen = Int64(c.callsign.toRuneArray().size)
                 let isObs = (csLen > 4 && substrFrom(c.callsign, csLen - 4) == "_OBS")
                 if (!isObs && durationMin > 0) {
+                    statsLock.lock()
                     try {
                         let line = "${c.cid}:${c.callsign}:${mgmtime()}:${ctype}:${durationMin}\n"
                         var content = line
@@ -727,6 +735,7 @@ public class ClUser <: NetUser {
                     } catch (e: Exception) {
                         dolog(L_ERR, "Stats write error: ${e}")
                     }
+                    statsLock.unlock()
                 }
                 this.iface.sendRemoveClient(c)
                 serverInterface?.sendRmClient("*", c.callsign, None)
