@@ -37,7 +37,14 @@ public class VoiceServer {
         match (this.listener) {
             case Some(srv) =>
                 while (this.running) {
-                    try { let s = srv.accept(); spawn { handleClient(s) } }
+                    try {
+                        if (this.clients.size >= 100) {
+                            dolog(L_WARNING, "Voice: max clients (100) reached, rejecting")
+                            sleep(100 * Duration.millisecond)
+                            continue
+                        }
+                        let s = srv.accept(); spawn { handleClient(s) }
+                    }
                     catch (_: Exception) { if (!this.running) { break } }
                 }
                 srv.close()
@@ -177,6 +184,7 @@ public class VoiceServer {
         return "?"
     }
     private func bytesToInt64(b: ArrayList<UInt8>, off: Int64): Int64 {
+        if (off + 3 >= b.size) { return 0 }
         var r: Int64 = 0
         for (i in 0..4) { r = r | (Int64(b[off + i]) << (i * 8)) }
         return r

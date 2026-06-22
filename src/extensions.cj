@@ -89,7 +89,7 @@ func parseInt32(s: String): Int32 {
     for (ch in s.toRuneArray()) {
         if (ch >= r'0' && ch <= r'9') {
             let d = runeToDigit(ch)
-            if (result > MAX_DIV10) { return 2147483647 }  // 溢出时返回 MAX
+            if (result > MAX_DIV10 || (result == MAX_DIV10 && d > 7)) { return 2147483647 }
             result = result * 10 + d
         }
     }
@@ -97,12 +97,12 @@ func parseInt32(s: String): Int32 {
 }
 
 func parseInt64(s: String): Int64 {
-    let MAX_DIV10: Int64 = 922337203685477580  // Int64.MAX / 10
+    let MAX_DIV10: Int64 = 922337203685477580
     var result: Int64 = 0
     for (ch in s.toRuneArray()) {
         if (ch >= r'0' && ch <= r'9') {
             let d = Int64(runeToDigit(ch))
-            if (result > MAX_DIV10) { return 9223372036854775807 }  // 溢出时返回 MAX
+            if (result > MAX_DIV10 || (result == MAX_DIV10 && d > 7)) { return 9223372036854775807 }
             result = result * 10 + d
         }
     }
