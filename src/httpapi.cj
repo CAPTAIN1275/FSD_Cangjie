@@ -12,11 +12,13 @@ import std.collection.*
 
 public class HttpApi {
     var port: Int32
+    var apiKey: String
     var running: Bool
     var server: ?TcpServerSocket
 
-    public init(port: Int32) {
+    public init(port: Int32, apiKey: String) {
         this.port = port
+        this.apiKey = apiKey
         this.running = false
         this.server = None
     }
@@ -96,6 +98,17 @@ public class HttpApi {
     }
 
     private func handleRequest(method: String, path: String, query: String, remoteIp: String): (Int32, String, String) {
+        // API 密钥验证
+        let params = splitStr(query, "&")
+        var providedKey = ""
+        for (i in 0..params.size) {
+            let pair = splitStr(params[Int64(i)], "=")
+            if (pair.size == 2 && pair[0] == "key") { providedKey = pair[1] }
+        }
+        if (this.apiKey != "" && providedKey != this.apiKey) {
+            return (403, "application/json", '{"status":"error","message":"Forbidden"}')
+        }
+
         // CORS preflight
         if (method == "OPTIONS") {
             return (200, "text/plain", "OK")

@@ -440,8 +440,10 @@ public class ServUser <: NetUser {
         }
         if (cmd == CMD_KILL) {
             if (parts.size < 6) { return true }
-            match (getClient(parts[4])) { case Some(c) =>
-                clientInterface?.sendKillClient(c, parts[5])
+            let fromIdent = match (fromSvr) { case Some(s) => s.ident; case None => "?" }
+            dolog(L_INFO, "KILL from ${fromIdent}: ${parts[4]} reason=${parts[5]}")
+            match (getClient(parts[5])) { case Some(c) =>
+                clientInterface?.sendKillClient(c, parts[6])
             ; case None => () }
             return true
         }

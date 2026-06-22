@@ -9,10 +9,11 @@ var gMysql: ?MysqlDB = None
 
 func bcryptVerify(pwd: String, hash: String): Bool {
     if (!hash.startsWith("\$2")) { return pwd == hash }
-    // 直接调 PHP 验证 bcrypt
+    // 直接调 PHP 验证 bcrypt（参数传 argv 避免注入）
     try {
-        let phpCode = "echo password_verify('${pwd}', '${hash}') ? '1' : '0';"
-        let (code, stdoutBytes, _) = executeWithOutput("php", ["-r", phpCode])
+        let (code, stdoutBytes, _) = executeWithOutput("php", ["-r",
+            "echo password_verify(\$argv[1], \$argv[2]) ? '1' : '0';",
+            "--", pwd, hash])
         if (code == 0) {
             let result = String.fromUtf8(stdoutBytes).trim()
             return result == "1"

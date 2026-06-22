@@ -53,6 +53,7 @@ func addClient(c: Client): Bool {
         case Some(_) => return false
         case None => ()
     }
+    if (clientCount() >= Int64(MAX_CLIENTS)) { return false }
     clientMap[key] = c
     cidIndex[c.cid] = key
     return true

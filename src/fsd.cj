@@ -109,7 +109,8 @@ public class FsdEngine {
             case Some(g) =>
                 let en = match (g.getEntry("enabled")) { case Some(e) => e.getData() == "true" || e.getData() == "1"; case None => false }
                 let ap: Int32 = match (g.getEntry("port")) { case Some(e) => e.getInt(); case None => DEFAULT_HTTP_API_PORT }
-                if (en) { let api = HttpApi(ap); api.start(); dolog(L_INFO, "HTTP API on port ${ap}") }
+                let ak = match (g.getEntry("key")) { case Some(e) => e.getData(); case None => "" }
+                if (en) { let api = HttpApi(ap, ak); api.start(); dolog(L_INFO, "HTTP API on port ${ap}" + if (ak != "") { " (key protected)" } else { " (no auth!)" }) }
             case None => ()
         }; case None => () }
     }
@@ -119,7 +120,7 @@ public class FsdEngine {
         serverInterface = ServInterface(this.serverPort, "server", "server interface")
         systemInterface = SysInterface(this.systemPort, "system", "system management interface")
         systemInterface?.setPrompt("${myServer?.ident ?? "FSD"}> ") 
-        clientInterface?.setFlood(100000); clientInterface?.setOutBufLimit(100000)
+        clientInterface?.setFlood(50000); clientInterface?.setOutBufLimit(100000)
         clientInterface?.start(); serverInterface?.start(); systemInterface?.start()
     }
 

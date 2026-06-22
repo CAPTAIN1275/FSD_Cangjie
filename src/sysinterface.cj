@@ -248,6 +248,7 @@ public class SysInterface <: NetInterface {
         }
         else if (cmd == "shutdown") {
             if (!user.isPrivileged) { user.outStr += "Not authorized.\r\n"; return }
+            if (args.size < 2 || args[1] != "confirm") { user.outStr += "Type 'shutdown confirm' to shut down.\r\n"; return }
             user.outStr += "Shutting down FSD...\r\n"
             user.socket.close()
             // 给所有客户端发 #DA/#DP 断开协议

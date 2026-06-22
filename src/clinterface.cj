@@ -666,7 +666,7 @@ public class ClUser <: NetUser {
             case None => ()
         }
         if (this.delayClose) {
-            var n: Int64 = 0; for (i in 0..100000000) { n += 1 }
+            sleep(50 * Duration.millisecond)
         }
         this.socket.close()
         // 从用户列表移除自己，防止内存泄漏

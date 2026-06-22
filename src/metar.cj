@@ -62,6 +62,11 @@ public class MetarManager {
     // parsed/fd: 保留参数
     public func requestMetar(client: String, metar: String, parsed: Int32, fd: Int32): Unit {
         let icao = metar.toUpper()
+        // ICAO 验证：只允许 2-4 位字母数字
+        if (icao.toRuneArray().size < 2 || icao.toRuneArray().size > 4) { return }
+        for (ch in icao.toRuneArray()) {
+            if (!(ch >= r'A' && ch <= r'Z') && !(ch >= r'0' && ch <= r'9')) { return }
+        }
         dolog(L_INFO, "METAR request: ${icao} from ${client}")
 
         // 先查缓存
