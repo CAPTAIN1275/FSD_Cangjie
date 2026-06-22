@@ -75,6 +75,8 @@ public open class NetInterface {
     public open func stop(): Unit { this.runFlag = false }
     public func setFlood(_n: Int32): Unit { this.floodLimit = _n }
     public func setOutBufLimit(_n: Int32): Unit { this.outBufLimit = _n }
+    // IP 白名单检查钩子（子类重写），默认放行
+    public open func checkPeer(_socket: TcpSocket): Bool { return true }
 
     private func acceptLoop(): Unit {
         try {
@@ -84,6 +86,11 @@ public open class NetInterface {
             while (this.runFlag) {
                 try {
                     let s = ss.accept()
+                    if (!this.checkPeer(s)) {
+                        dolog(L_INFO, "Connection rejected by allowList")
+                        s.close()
+                        continue
+                    }
                     dolog(L_DEBUG, "New connection on ${this.desc}")
                     spawn { serve(createUser(s)) }
                 } catch (e: Exception) {
@@ -94,8 +101,12 @@ public open class NetInterface {
         } catch (e: Exception) { dolog(L_ERR, "BIND FAIL on port ${this.port}: ${e}") }
     }
 
-    private func serve(u: NetUser): Unit {
+    public func serve(u: NetUser): Unit {
         var buf = Array<UInt8>(4096, repeat: 0u8)
+        // 先刷新 sendFeed 写入的输出缓冲
+        if (u.outStr != "") {
+            try { u.socket.write(toBuf(u.outStr)); u.outStr = "" } catch (e: Exception) { return }
+        }
         u.onConnect()
         while (this.runFlag) {
             if (u.outStr != "") {

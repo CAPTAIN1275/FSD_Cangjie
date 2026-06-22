@@ -17,7 +17,17 @@ public class ServInterface <: NetInterface {
         this.packetCount = 0
         this.lastSync = 0
     }
-    public override func createUser(socket: TcpSocket): NetUser { return ServUser(socket, this) }
+    public override func createUser(socket: TcpSocket): NetUser {
+        let u = ServUser(socket, this)
+        this.users.add(u)
+        // 加完用户后再发 feed，确保 assembleAndSend 能找到新连接
+        u.sendFeed()
+        return u
+    }
+    public override func checkPeer(socket: TcpSocket): Bool {
+        // TODO: Cangjie 1.2.0+ 支持 TcpSocket.remoteAddress 后启用
+        return true
+    }
 
     // ---- 主动连接（自动重连）----
     public func addUser(hostname: String, port: Int32, _ident: ?String): Int32 {
@@ -33,11 +43,8 @@ public class ServInterface <: NetInterface {
                 sock.connect()
                 dolog(L_INFO, "Connected to server ${hostname}:${port}")
                 let user = createUser(sock)
-                // 记录连接时间（user 是 ServUser，通过 init 自动触发 sendFeed）
-                // 等待连接结束
-                while (this.runFlag && user.alive > 0) {
-                    sleep(100 * Duration.millisecond)
-                }
+                // 用 serve 循环处理远程发来的协议包（NOTIFY、客户端数据等）
+                serve(user)
                 dolog(L_WARNING, "Server ${hostname}:${port} disconnected, reconnecting...")
                 try { sock.close() } catch (_: Exception) {}
             } catch (e: Exception) {
@@ -155,24 +162,27 @@ public class ServUser <: NetUser {
         super(socket)
         this.iface = iface
         this.startupTime = mgmtime()
-        // 连接建立后，发送所有本地数据给对端
-        sendFeed()
+        // sendFeed 移到了 createUser 中调用（先加 users 列表再发）
     }
 
-    // feed �?向新连接的对端同步全量数�?
-    private func sendFeed(): Unit {
-        // 发送所有已知服务器
+    // feed — 向新连接的对端同步全量数据
+    public func sendFeed(): Unit {
+        // 先发自己的 NOTIFY（让对端知道我是谁）
+        match (myServer) { case Some(ms) => this.iface.sendServerNotify("*", ms, None); case None => () }
+        // 再发所有已知其他服务器
         var sv = rootServer
         while (true) { match (sv) { case Some(s) =>
             if (s.ident != (myServer?.ident ?? "")) { this.iface.sendServerNotify("*", s, None) }
             sv = s.next
         ; case None => break }}
         // 发送所有客户端
+        var clientSent = 0
         for (key in clientMap.keys()) {
             let c = clientMap.get(key).getOrThrow()
-            if (clLocal(c)) { this.iface.sendAddClient("*", c, None) }
+            if (clLocal(c)) { this.iface.sendAddClient("*", c, None); clientSent += 1 }
             match (c.plan) { case Some(_) => this.iface.sendPlan("*", c, None); case None => () }
         }
+        dolog(L_INFO, "sendFeed: sent ${clientSent} clients, sent NOTIFY for myServer")
         // 发送所有证�?
         var cert = rootCert
         while (true) { match (cert) { case Some(c) =>
@@ -283,13 +293,28 @@ public class ServUser <: NetUser {
 
     private func execCmd(cmd: Int32, parts: Array<String>, data: String, fromSvr: ?Server): Bool {
         if (cmd == CMD_NOTIFY) {
-            if (parts.size < 11) { return false }
-            let ident = parts[5]; let name = parts[6]; let email = parts[7]
-            let hostname = parts[8]; let version = parts[9]; let flags = parseInt32(parts[10])
-            let location = if (parts.size > 11) { parts[11] } else { "" }
+            if (parts.size < 12) { dolog(L_WARNING, "NOTIFY too short: ${parts.size} parts"); return false }
+            let ident = parts[6]; let name = parts[7]; let email = parts[8]
+            let hostname = parts[9]; let version = parts[10]; let flags = parseInt32(parts[11])
+            let location = if (parts.size > 12) { parts[12] } else { "" }
+            dolog(L_INFO, "NOTIFY received: ident=${ident} name=${name} host=${hostname}")
+            // 更新/添加服务器
             match (getServer(ident)) {
-                case Some(s) => s.configure(name, email, hostname, version, location)
-                case None => let sv = Server(ident, name, email, hostname, version, flags, location); addServer(sv)
+                case Some(s) =>
+                    s.configure(name, email, hostname, version, location)
+                    // 记录路由：此服务器可通过 fromSvr 到达
+                    match (fromSvr) {
+                        case Some(fs) =>
+                            if (ident != fs.ident) { s.routes["*"] = ServerRoute(fs, 1, 0) }
+                        case None => ()
+                    }
+                case None =>
+                    let sv = Server(ident, name, email, hostname, version, flags, location)
+                    addServer(sv)
+                    match (fromSvr) {
+                        case Some(fs) => if (ident != fs.ident) { sv.routes["*"] = ServerRoute(fs, 1, 0) }
+                        case None => ()
+                    }
             }
             return true
         }
@@ -304,18 +329,26 @@ public class ServUser <: NetUser {
             return true
         }
         if (cmd == CMD_LINKDOWN) {
-            for (i in 5..parts.size) { match (getServer(parts[i])) { case Some(s) =>
-                s.routes.remove("*")
-            ; case None => () }}
+            // 清理经过断开服务器的路由
+            for (i in 5..parts.size) {
+                match (getServer(parts[i])) { case Some(s) =>
+                    s.routes.remove("*")
+                    // 如果此服务器就是断开连接的对端，移除它
+                    match (fromSvr) {
+                        case Some(fs) => if (s.ident == fs.ident) { removeServer(s) }
+                        case None => ()
+                    }
+                ; case None => () }}
             this.iface.sendSync()
             return true
         }
         if (cmd == CMD_SYNC) { this.iface.sendSync(); return false }
         if (cmd == CMD_ADDCLIENT) {
-            if (parts.size < 12) { return true }
-            let cid = parts[4]; let locIdent = parts[5]; let callsign = parts[6]
-            let type_ = parseInt32(parts[7]); let rating = parseInt32(parts[8])
-            let protocol = parseInt32(parts[9]); let realname = parts[10]
+            if (parts.size < 12) { dolog(L_WARNING, "ADDCLIENT too short: ${parts.size}"); return true }
+            let cid = parts[5]; let locIdent = parts[6]; let callsign = parts[7]
+            let type_ = parseInt32(parts[8]); let rating = parseInt32(parts[9])
+            let protocol = parseInt32(parts[10]); let realname = parts[11]
+            dolog(L_INFO, "ADDCLIENT: cid=${cid} loc=${locIdent} cs=${callsign} type=${type_}")
             match (getClient(callsign)) {
                 case Some(_) => return false
                 case None =>
@@ -324,9 +357,10 @@ public class ServUser <: NetUser {
                         case Some(l) =>
                             let cl = Client(callsign, cid, realname, "", type_, rating, protocol)
                             cl.location = loc; addClient(cl)
+                            dolog(L_INFO, "ADDCLIENT added: ${callsign} at ${l.ident}")
                             if (type_ == CLIENT_ATC) { clientInterface?.sendAddA(cl) }
                             else { clientInterface?.sendAddP(cl) }
-                        case None => ()
+                        case None => dolog(L_WARNING, "ADDCLIENT server not found: ${locIdent}")
                     }
             }
             return true
@@ -339,8 +373,8 @@ public class ServUser <: NetUser {
         }
         if (cmd == CMD_PD) {
             if (parts.size < 15) { return true }
-            match (getClient(parts[5])) { case Some(c) =>
-                c.transponder = parseInt32(parts[6]); c.rating = parseInt32(parts[7])
+            match (getClient(parts[6])) { case Some(c) =>
+                c.transponder = parseInt32(parts[5]); c.rating = parseInt32(parts[7])
                 c.lat = parseFloat(parts[8]); c.lon = parseFloat(parts[9])
                 c.altitude = parseInt32(parts[10]); c.groundspeed = parseInt32(parts[11])
                 c.pbh = UInt32(parseInt64(parts[12])); c.touch()
@@ -350,37 +384,37 @@ public class ServUser <: NetUser {
         }
         if (cmd == CMD_AD) {
             if (parts.size < 13) { return true }
-            match (getClient(parts[4])) { case Some(c) =>
-                c.frequency = parseInt32(parts[5]); c.facilitytype = parseInt32(parts[6])
-                c.visualrange = parseInt32(parts[7]); c.rating = parseInt32(parts[8])
-                c.lat = parseFloat(parts[9]); c.lon = parseFloat(parts[10])
-                c.altitude = parseInt32(parts[11]); c.touch()
+            match (getClient(parts[5])) { case Some(c) =>
+                c.frequency = parseInt32(parts[6]); c.facilitytype = parseInt32(parts[7])
+                c.visualrange = parseInt32(parts[8]); c.rating = parseInt32(parts[9])
+                c.lat = parseFloat(parts[10]); c.lon = parseFloat(parts[11])
+                c.altitude = parseInt32(parts[12]); c.touch()
                 clientInterface?.broadcastAtcPos(c)
             ; case None => () }
             return true
         }
         if (cmd == CMD_PLAN) {
             if (parts.size < 21) { return false }
-            match (getClient(parts[4])) { case Some(c) =>
+            match (getClient(parts[5])) { case Some(c) =>
                 let fp = FlightPlan()
-                fp.callsign = c.callsign; fp.revision = parseInt32(parts[5])
-                fp.`type` = if (parts[6] != "") { parts[6].toRuneArray()[0] } else { r'I' }
-                fp.aircraft = parts[7]; fp.tascruise = parseInt32(parts[8])
-                fp.depAirport = parts[9]; fp.depTime = parseInt32(parts[10])
-                fp.actDepTime = parseInt32(parts[11]); fp.altitude = parseInt32(parts[12])
-                fp.destAirport = parts[13]; fp.hrsEnroute = parseInt32(parts[14])
-                fp.minEnroute = parseInt32(parts[15]); fp.hrsFuel = parseInt32(parts[16])
-                fp.minFuel = parseInt32(parts[17]); fp.altAirport = parts[18]
-                fp.remarks = parts[19]; fp.route = parts[20]
+                fp.callsign = c.callsign; fp.revision = parseInt32(parts[6])
+                fp.`type` = if (parts[7] != "") { parts[7].toRuneArray()[0] } else { r'I' }
+                fp.aircraft = parts[8]; fp.tascruise = parseInt32(parts[9])
+                fp.depAirport = parts[10]; fp.depTime = parseInt32(parts[11])
+                fp.actDepTime = parseInt32(parts[12]); fp.altitude = parseInt32(parts[13])
+                fp.destAirport = parts[14]; fp.hrsEnroute = parseInt32(parts[15])
+                fp.minEnroute = parseInt32(parts[16]); fp.hrsFuel = parseInt32(parts[17])
+                fp.minFuel = parseInt32(parts[18]); fp.altAirport = parts[19]
+                fp.remarks = parts[20]; fp.route = parts[21]
                 c.plan = fp; clientInterface?.broadcastPlan(c)
             ; case None => () }
             return true
         }
         if (cmd == CMD_CERT) {
-            if (parts.size < 10) { return false }
-            let mode = parseInt32(parts[4]); let cid = parts[5]; let pwd = parts[6]
-            let level = parseInt32(parts[7]); let created = parseInt64(parts[8])
-            let origin = parts[9]
+            if (parts.size < 11) { return false }
+            let mode = parseInt32(parts[5]); let cid = parts[6]; let pwd = parts[7]
+            let level = parseInt32(parts[8]); let created = parseInt64(parts[9])
+            let origin = parts[10]
             if (mode == CERT_ADD) {
                 match (getCert(cid)) {
                     case Some(existing) => if (created > existing.created) { existing.configure(pwd, level, created, origin) }
@@ -395,13 +429,13 @@ public class ServUser <: NetUser {
         }
         if (cmd == CMD_MULTIC) {
             if (parts.size < 7) { return true }
-            let clCmd = parseInt32(parts[4]); let srcCallsign = parts[5]
-            var msgData = ""; for (i in 6..parts.size) { if (msgData != "") { msgData += ":" }; msgData += parts[i] }
+            let clCmd = parseInt32(parts[5]); let srcCallsign = parts[6]
+            var msgData = ""; for (i in 7..parts.size) { if (msgData != "") { msgData += ":" }; msgData += parts[i] }
             clientInterface?.routeMessage(srcCallsign, parts[1], msgData)
             return true
         }
         if (cmd == CMD_REQMETAR) {
-            match (metarManager) { case Some(mm) => mm.requestMetar(parts[4], parts[5], parseInt32(parts[6]), parseInt32(parts[7])); case None => () }
+            match (metarManager) { case Some(mm) => mm.requestMetar(parts[5], parts[6], parseInt32(parts[7]), parseInt32(parts[8])); case None => () }
             return true
         }
         if (cmd == CMD_KILL) {

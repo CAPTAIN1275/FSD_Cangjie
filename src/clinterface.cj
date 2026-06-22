@@ -19,6 +19,17 @@ public class ClInterface <: NetInterface {
         this.users.add(u)
         return u
     }
+    public func allow(ip: String): Unit { this.allowList.add(ip) }
+    public func isAllowed(ip: String): Bool {
+        if (this.allowList.size == 0) { return true }
+        return this.allowList.contains(ip)
+    }
+    public override func checkPeer(socket: TcpSocket): Bool {
+        // TODO: Cangjie 1.2.0+ 支持 TcpSocket.remoteAddress 后启用
+        // if (this.allowList.size == 0) { return true }
+        // match (socket.remoteAddress) { ... }
+        return true
+    }
 
     public func sendError(user: ClUser, code: Int32, env: String, callsign: String): Unit {
         let paddedCode = if (code < 10) { "00${code}" } else if (code < 100) { "0${code}" } else { "${code}" }
@@ -470,6 +481,19 @@ public class ClInterface <: NetInterface {
 
     public func routeMessage(from: String, target: String, msg: String): Unit {
         let line = "#TM${from}:${target}:${msg}\r\n"
+        // 解析 @ 频率目标
+        let targetFreq: Int32 = if (target.startsWith("@") && target.toRuneArray().size > 1) {
+            let freqStr = substrFrom(target, 1)
+            // "122.800" → 122800
+            let dotPos = freqStr.indexOf(r'.')
+            match (dotPos) {
+                case Some(pos) =>
+                    let whole = parseInt32(substrTo(freqStr, pos))
+                    let frac = parseInt32(substrFrom(freqStr, pos + 1))
+                    whole * 1000 + (frac % 1000)
+                case None => parseInt32(freqStr) * 1000
+            }
+        } else { 0 }
         for (u in this.users) {
             match (u) { case cu: ClUser => match (cu.client) {
                 case Some(c) =>
@@ -477,7 +501,15 @@ public class ClInterface <: NetInterface {
                     if (target == "*") { deliver = c.callsign != from }
                     else if (target == "*A") { deliver = c.isAtc() && c.callsign != from }
                     else if (target == "*P") { deliver = c.isPilot() && c.callsign != from }
-                    else if (target.startsWith("@")) { deliver = c.callsign != from }
+                    else if (target.startsWith("@")) {
+                        if (targetFreq != 0) {
+                            // @freq：同频率才转发
+                            deliver = c.frequency == targetFreq && c.callsign != from
+                        } else {
+                            // @ 无频率：发给同服务器所有客户端
+                            deliver = c.callsign != from
+                        }
+                    }
                     else { deliver = (c.callsign == target) }
                     if (deliver) { sendTo(cu, line) }
                 case None => ()

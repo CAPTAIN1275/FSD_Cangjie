@@ -125,14 +125,27 @@ public class FsdEngine {
 
     public func makeConnections(): Unit {
         match (configMan) { case Some(cm) => match (cm.getGroup("connections")) {
-            case Some(g) => match (g.getEntry("connectto")) {
-                case Some(e) => for (i in 0..e.getNparts()) {
-                    var h = e.getPart(i); var cp: Int32 = 3011
-                    match (h.indexOf(r':')) { case Some(pos) => cp = parseInt32(substrFrom(h, pos + 1)); h = substrTo(h, pos); case None => () }
-                    serverInterface?.addUser(h, cp, None)
+            case Some(g) =>
+                // 读 allowfrom IP 白名单
+                match (g.getEntry("allowfrom")) {
+                    case Some(e) => for (i in 0..e.getNparts()) {
+                        let ip = e.getPart(i).trim()
+                        if (ip != "") {
+                            clientInterface?.allow(ip)
+                            serverInterface?.allow(ip)
+                        }
+                    }; case None => ()
                 }
-                case None => ()
-            }; case None => ()
+                // 读 connectto 服务器连接
+                match (g.getEntry("connectto")) {
+                    case Some(e) => for (i in 0..e.getNparts()) {
+                        var h = e.getPart(i); var cp: Int32 = 3011
+                        match (h.indexOf(r':')) { case Some(pos) => cp = parseInt32(substrFrom(h, pos + 1)); h = substrTo(h, pos); case None => () }
+                        serverInterface?.addUser(h, cp, None)
+                    }
+                    case None => ()
+                }
+            case None => ()
         }; case None => () }
         serverInterface?.sendReset()
     }
