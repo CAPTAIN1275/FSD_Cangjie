@@ -2,6 +2,7 @@
 
 import std.net.*
 import std.collection.*
+import std.sync.*
 
 func sendTo(user: NetUser, data: String): Unit {
     let bytes = data.toArray()
@@ -60,6 +61,7 @@ func byteStr(b: UInt8): String {
 public open class NetInterface {
     var port: Int32; var name: String; var desc: String; var runFlag: Bool
     var users: ArrayList<NetUser>
+    var usersLock = Mutex()
     var floodLimit: Int32; var outBufLimit: Int32
     public init(port: Int32, name: String, description: String) {
         this.port = port; this.name = name; this.desc = description

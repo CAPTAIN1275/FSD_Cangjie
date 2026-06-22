@@ -13,7 +13,8 @@ var metarManager: ?MetarManager = None
 var fsdEngine: ?FsdEngine = None
 var replayBuf: String = ""
 var replayLock = Mutex()
-var blockedFlights: String = ""  // 禁止连飞的航班号逗号分隔
+var blockedFlights: String = ""
+var blockedLock = Mutex()
 
 public class FsdEngine {
     var certFile: ?String; var whazzupFile: ?String
@@ -205,7 +206,9 @@ public class FsdEngine {
         match (configMan) { case Some(cm) => match (cm.getGroup("system")) {
             case Some(g) =>
                 let bf = match (g.getEntry("blocked_flights")) { case Some(e) => e.getData(); case None => "" }
+                blockedLock.lock()
                 blockedFlights = bf
+                blockedLock.unlock()
             case None => ()
         }; case None => () }
         let now = mgmtime()

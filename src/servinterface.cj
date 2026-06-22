@@ -19,7 +19,9 @@ public class ServInterface <: NetInterface {
     }
     public override func createUser(socket: TcpSocket): NetUser {
         let u = ServUser(socket, this)
+        this.usersLock.lock()
         this.users.add(u)
+        this.usersLock.unlock()
         // 加完用户后再发 feed，确保 assembleAndSend 能找到新连接
         u.sendFeed()
         return u
@@ -131,7 +133,12 @@ public class ServInterface <: NetInterface {
         let isBcast = (dest.startsWith("*") || dest.startsWith("@"))
         let bi = if (isBcast) { "B" } else { "U" }
         let line = "${cmdnames[Int64(cmd)]}:${dest}:${myServer?.ident ?? "FSD"}:${bi}${this.packetCount}:0:${data}\r\n"
-        for (u in this.users) {
+        this.usersLock.lock()
+        let _us = ArrayList<NetUser>()
+        for (_ui in 0..this.users.size) { _us.add(this.users[_ui]) }
+        this.usersLock.unlock()
+        for (_ui in 0.._us.size) {
+            let u = _us[_ui]
             match (u) {
                 case su: ServUser => su.outStr += line
                 case _ => ()
@@ -278,7 +285,12 @@ public class ServUser <: NetUser {
             }
         }
         // 发送到匹配的服务器连接
-        for (u in this.iface.users) {
+        this.iface.usersLock.lock()
+        let _us = ArrayList<NetUser>()
+        for (_ui in 0..this.iface.users.size) { _us.add(this.iface.users[_ui]) }
+        this.iface.usersLock.unlock()
+        for (_ui in 0.._us.size) {
+            let u = _us[_ui]
             match (u) {
                 case su: ServUser =>
                     var shouldSend = true

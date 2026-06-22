@@ -27,7 +27,10 @@ func dolog(level: Int32, msg: String): Unit {
 
 func mgmtime(): Int64 {
     let now = DateTime.now()
-    return (now.year - 1970) * 31536000 + now.dayOfYear * 86400 + now.hour * 3600 + now.minute * 60 + now.second
+    let y = now.year
+    // 计算从 1970 到 y-1 之间的闰年数量
+    let leapYears = ((y - 1) / 4 - (y - 1) / 100 + (y - 1) / 400) - (1969 / 4 - 1969 / 100 + 1969 / 400)
+    return (Int64(y) - 1970) * 31536000 + Int64(leapYears) * 86400 + Int64(now.dayOfYear - 1) * 86400 + Int64(now.hour) * 3600 + Int64(now.minute) * 60 + Int64(now.second)
 }
 func mtime(): Int64 { return mgmtime() }
 

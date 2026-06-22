@@ -19,7 +19,9 @@ public class ClInterface <: NetInterface {
     }
     public override func createUser(socket: TcpSocket): NetUser {
         let u = ClUser(socket, this)
+        this.usersLock.lock()
         this.users.add(u)
+        this.usersLock.unlock()
         return u
     }
     public func allow(ip: String): Unit { this.allowList.add(ip) }
@@ -456,8 +458,13 @@ public class ClInterface <: NetInterface {
 
     // ---- 广播 ----
     public func broadcastToClients(data: String, exclude: ?String): Unit {
-        for (u in this.users) {
-            match (u) { case cu: ClUser => 
+        this.usersLock.lock()
+        let _us = ArrayList<NetUser>()
+        for (_ui in 0..this.users.size) { _us.add(this.users[_ui]) }
+        this.usersLock.unlock()
+        for (_ui in 0.._us.size) {
+            let u = _us[_ui]
+            match (u) { case cu: ClUser =>
                 if (let Some(c) <- cu.client) {
                     match (exclude) { case Some(cs) => if (c.callsign == cs) { continue }; case None => () }
                     sendTo(cu, data)
@@ -501,7 +508,12 @@ public class ClInterface <: NetInterface {
                 case None => parseInt32(freqStr) * 1000
             }
         } else { 0 }
-        for (u in this.users) {
+        this.usersLock.lock()
+        let _us = ArrayList<NetUser>()
+        for (_ui in 0..this.users.size) { _us.add(this.users[_ui]) }
+        this.usersLock.unlock()
+        for (_ui in 0.._us.size) {
+            let u = _us[_ui]
             match (u) { case cu: ClUser => match (cu.client) {
                 case Some(c) =>
                     var deliver = false
@@ -555,7 +567,12 @@ public class ClInterface <: NetInterface {
         }
 
         // 分发到所有匹配的客户端
-        for (u in this.users) {
+        this.usersLock.lock()
+        let _us = ArrayList<NetUser>()
+        for (_ui in 0..this.users.size) { _us.add(this.users[_ui]) }
+        this.usersLock.unlock()
+        for (_ui in 0.._us.size) {
+            let u = _us[_ui]
             match (u) { case cu: ClUser => match (cu.client) {
                 case Some(c) =>
                     if (c.callsign == fromCallsign) { continue }
@@ -591,7 +608,14 @@ public class ClInterface <: NetInterface {
     }
     public func sendKillClient(client: Client, reason: String): Unit {
         broadcastToClients("\$!!SERVER:${client.callsign}:${reason}\r\n", None)
-        for (u in this.users) { match (u) { case cu: ClUser => if (let Some(c) <- cu.client) { if (c.callsign == client.callsign) { cu.socket.close() } }; case _ => () } }
+        this.usersLock.lock()
+        let _us = ArrayList<NetUser>()
+        for (_ui in 0..this.users.size) { _us.add(this.users[_ui]) }
+        this.usersLock.unlock()
+        for (_ui in 0.._us.size) {
+            let u = _us[_ui]
+            match (u) { case cu: ClUser => if (let Some(c) <- cu.client) { if (c.callsign == client.callsign) { cu.socket.close() } }; case _ => () }
+        }
     }
 
     // ---- PD/AD 广播（供 ServInterface 调用）----
@@ -605,13 +629,21 @@ public class ClInterface <: NetInterface {
         match (client.plan) { case Some(fp) => broadcastToClients("\$FP${client.callsign}:SERVER:${fp.`type`}:${fp.serialize()}\r\n", None); case None => () }
     }
     public func broadcastToAll(data: String): Unit {
-        for (u in this.users) { u.outStr += data }
+        this.usersLock.lock()
+        let _us = ArrayList<NetUser>()
+        for (_ui in 0..this.users.size) { _us.add(this.users[_ui]) }
+        this.usersLock.unlock()
+        for (_ui in 0.._us.size) { _us[_ui].outStr += data }
     }
 
     public func broadcastWeatherProfile(wp: WeatherProfile): Unit {
         let wx = wp.toWxMessage("server") + "\r\n"
         let cd = wp.toCdMessage() + "\r\n"
-        for (u in this.users) { u.outStr += wx + cd }
+        this.usersLock.lock()
+        let _us = ArrayList<NetUser>()
+        for (_ui in 0..this.users.size) { _us.add(this.users[_ui]) }
+        this.usersLock.unlock()
+        for (_ui in 0.._us.size) { _us[_ui].outStr += wx + cd }
     }
 
     private func buildAddClientLine(c: Client): String {
@@ -679,6 +711,7 @@ public class ClUser <: NetUser {
         }
         this.socket.close()
         // 从用户列表移除自己，防止内存泄漏
+        this.iface.usersLock.lock()
         var found: ?Int64 = None
         for (idx in 0..this.iface.users.size) {
             match (this.iface.users[Int64(idx)]) {
@@ -698,6 +731,7 @@ public class ClUser <: NetUser {
             case Some(idx) => this.iface.users.remove(idx..(idx+1))
             case None => ()
         }
+        this.iface.usersLock.unlock()
     }
     public override func handleLine(line: String): Unit {
         let trimmed = line.trim()
@@ -754,9 +788,12 @@ public class ClUser <: NetUser {
 
 // 检查呼号是否包含禁止的航班号
 func isBlockedFlight(callsign: String): Bool {
-    if (blockedFlights == "") { return false }
+    blockedLock.lock()
+    let bf = blockedFlights
+    blockedLock.unlock()
+    if (bf == "") { return false }
     let cs = callsign.toUpper()
-    let items = splitStr(blockedFlights, ",")
+    let items = splitStr(bf, ",")
     for (i in 0..items.size) {
         let num = items[Int64(i)].trim().toUpper()
         if (num == "") { continue }
