@@ -52,7 +52,10 @@ public class ClInterface <: NetInterface {
         if (parts.size < 2) { sendError(user, ERR_SYNTAX, "unknown", "unknown"); return }
 
         let callsign = parts[0].toUpper()  // 统一大写
+        // 字段长度限制
+        if (callsign.toRuneArray().size > Int64(CALLSIGNBYTES)) { sendError(user, ERR_CSINVALID, "", "unknown"); user.shouldClose = true; user.delayClose = true; return }
         if (parts.size < 7) { sendError(user, ERR_SYNTAX, callsign, callsign); return }
+        if (parts[2].toRuneArray().size > 64 || parts[3].toRuneArray().size > 64 || parts[4].toRuneArray().size > 128) { sendError(user, ERR_SYNTAX, callsign, callsign); user.shouldClose = true; user.delayClose = true; return }
 
         // 检查是否禁止的航班号
         if (isBlockedFlight(callsign)) {

@@ -87,6 +87,10 @@ public open class NetInterface {
             println("[${this.desc}] port=${this.port}")
             while (this.runFlag) {
                 try {
+                    if (this.users.size > 1000) {  
+                        sleep(100 * Duration.millisecond)
+                        continue
+                    }
                     let s = ss.accept()
                     if (!this.checkPeer(s)) {
                         dolog(L_INFO, "Connection rejected by allowList")
