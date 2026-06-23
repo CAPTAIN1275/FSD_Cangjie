@@ -159,6 +159,7 @@ public open class NetInterface {
                         }
                         u.lineBytes.clear()
                     } else if (b != UInt8(13)) {
+                        if (u.lineBytes.size > 4096) { u.lineBytes.clear(); break }
                         u.lineBytes.add(b)
                     }
                 }

@@ -65,6 +65,7 @@ public class ConfigManager {
     private func readFileStr(path: String): String {
         try {
             let bytes = File.readFrom(Path(path))
+            if (bytes.size > 1048576) { dolog(L_WARNING, "Config file too large (${bytes.size} bytes), ignoring"); return "" }
             return String.fromUtf8(bytes)
         } catch (e: Exception) {
             return ""
@@ -100,7 +101,13 @@ public class ConfigManager {
                         case None => ()
                     }
                 }
-                this.groups = newGroups  // 一次性替换
+                // 完整性校验：新配置必须有 [system] 组
+                match (newGroups.get("system")) {
+                    case Some(_) => this.groups = newGroups  // 一次性替换
+                    case None =>
+                        dolog(L_WARNING, "Config reload: missing [system] section, keeping old config")
+                        this.lastContent = ""  // 下次再读取
+                }
             }
         }
         return 0
