@@ -200,4 +200,44 @@ public class MysqlDB {
             case None => return true
         }
     }
+
+    // 保存连线时长到数据库（区分飞行员/管制员）
+    public func saveOnlineTime(cid: String, ctype: String, durationMin: Int64): Bool {
+        match (this.conn) {
+            case Some(db) =>
+                try {
+                    let hours = Float64(durationMin) / 60.0  // 转成小数小时
+                    if (hours < 0.5) { return true }  // 不足半小时不计
+                    if (ctype == "ATC") {
+                        db.update("UPDATE ${this.tableUsers} SET control_hours = control_hours + ? WHERE ${this.colUserCallsign}=?", hours, cid)
+                    } else {
+                        db.update("UPDATE ${this.tableUsers} SET flight_hours = flight_hours + ?, last_login_time = NOW() WHERE ${this.colUserCallsign}=?", hours, cid)
+                    }
+                    return true
+                } catch (e: Exception) {
+                    dolog(L_WARNING, "saveOnlineTime failed: ${e}")
+                    return false
+                }
+            case None => return false
+        }
+    }
+
+    // 查询用户的飞行时长和管制时长（单位：小时，支持小数）
+    public func getUserHours(cid: String): (Float64, Float64) {
+        match (this.conn) {
+            case Some(db) =>
+                try {
+                    let rows = db.query("SELECT flight_hours, control_hours FROM ${this.tableUsers} WHERE ${this.colUserCallsign}=?", cid)
+                    if (rows.size > 0) {
+                        let fh = parseFloat(rows[0].getString("flight_hours").getOrThrow())
+                        let ch = parseFloat(rows[0].getString("control_hours").getOrThrow())
+                        return (fh, ch)
+                    }
+                } catch (e: Exception) {
+                    dolog(L_WARNING, "getUserHours failed: ${e}")
+                }
+            case None => ()
+        }
+        return (0.0, 0.0)
+    }
 }

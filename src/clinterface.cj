@@ -39,7 +39,7 @@ public class ClInterface <: NetInterface {
     public func sendError(user: ClUser, code: Int32, env: String, callsign: String): Unit {
         let paddedCode = if (code < 10) { "00${code}" } else if (code < 100) { "0${code}" } else { "${code}" }
         let msg = "\$ERserver:${callsign}:${paddedCode}:${env}:${errStr(code)}\r\n"
-        // 直接写 socket，C 版方式——不等 outStr 缓冲循环
+        // 先尝试直接写 socket，失败则回退到 outStr 缓冲
         try { user.socket.write(toBuf(msg)); user.outStr = "" } catch (_: Exception) { user.outStr += msg }
     }
 
@@ -422,20 +422,22 @@ public class ClInterface <: NetInterface {
                             user.outStr += "#TMserver:${c.callsign}:--- 连线统计 ---\r\n"
                             user.outStr += "#TMserver:${c.callsign}:呼号: ${me.callsign} (CID:${me.cid})\r\n"
                             user.outStr += "#TMserver:${c.callsign}:本次连线时长: ${durationStr}\r\n"
-                            // 统计历史总时长
-                            var totalMin: Int64 = 0
-                            try {
-                                let content = String.fromUtf8(File.readFrom(Path("stats.txt")))
-                                for (l in splitStr(content, "\n")) {
-                                    let fields = splitStr(l, ":")
-                                    if (fields.size >= 5 && fields[0] == me.cid) {
-                                        totalMin += Int64(parseInt32(fields[4]))
+                            // 从数据库查飞行时长和管制时长（单位：小时，支持小数）
+                            var flightHours: Float64 = 0.0; var controlHours: Float64 = 0.0
+                            match (gMysql) {
+                                case Some(db) =>
+                                    if (db.isConnected()) {
+                                        (flightHours, controlHours) = db.getUserHours(me.cid)
                                     }
-                                }
-                            } catch (e: Exception) {}
-                            if (totalMin > 0) {
-                                let totalStr = if (totalMin >= 60) { "${totalMin / 60}小时${totalMin % 60}分钟" } else { "${totalMin}分钟" }
-                                user.outStr += "#TMserver:${c.callsign}:历史总计: ${totalStr}\r\n"
+                                case None => ()
+                            }
+                            if (flightHours > 0.0) {
+                                let fh = formatFloat(flightHours)
+                                user.outStr += "#TMserver:${c.callsign}:飞行时长: ${fh}小时\r\n"
+                            }
+                            if (controlHours > 0.0) {
+                                let ch = formatFloat(controlHours)
+                                user.outStr += "#TMserver:${c.callsign}:管制时长: ${ch}小时\r\n"
                             }
                             // 在线用户数（排除 OBS）
                             var pilotCount = 0; var atcCount = 0; var obsCount = 0
@@ -690,27 +692,26 @@ public class ClUser <: NetUser {
                 let durationMin = (mgmtime() - c.startTime) / 60
                 let ctype = if (c.isAtc()) { "ATC" } else { "PILOT" }
                 dolog(L_INFO, "CLIENT DISCONNECT: ${c.callsign} (CID:${c.cid}) type=${ctype} duration=${durationMin}min")
-                // 保存到统计文件（OBS 不计入）
+                // 保存连线时长到数据库（区分飞行员/管制员，OBS 不计入）
                 let csLen = Int64(c.callsign.toRuneArray().size)
                 let isObs = (csLen > 4 && substrFrom(c.callsign, csLen - 4) == "_OBS")
                 if (!isObs && durationMin > 0) {
-                    statsLock.lock()
-                    try {
-                        let line = "${c.cid}:${c.callsign}:${mgmtime()}:${ctype}:${durationMin}\n"
-                        var content = line
-                        try { content = String.fromUtf8(File.readFrom(Path("stats.txt"))) + line } catch (e: Exception) {}
-                        File.writeTo(Path("stats.txt"), content.toArray())
-                        dolog(L_INFO, "Stats saved: ${c.callsign} ${durationMin}min")
-                    } catch (e: Exception) {
-                        dolog(L_ERR, "Stats write error: ${e}")
+                    match (gMysql) {
+                        case Some(db) =>
+                            if (db.isConnected()) {
+                                if (!db.saveOnlineTime(c.cid, ctype, durationMin)) {
+                                    dolog(L_WARNING, "DB stats failed for ${c.callsign}, fallback to file")
+                                    _saveStatsToFile(c.cid, c.callsign, ctype, durationMin)
+                                }
+                            } else { _saveStatsToFile(c.cid, c.callsign, ctype, durationMin) }
+                        case None => _saveStatsToFile(c.cid, c.callsign, ctype, durationMin)
                     }
-                    statsLock.unlock()
                 }
                 serverInterface?.sendRmClient("*", c.callsign, None); removeClient(c); this.iface.sendRemoveClient(c); fsdEngine?.writeWhazzUp()
             case None => ()
         }
         if (this.delayClose) {
-            sleep(50 * Duration.millisecond)
+            sleep(200 * Duration.millisecond)  // 给 TCP 时间刷新数据到客户端
         }
         this.socket.close()
         // 从用户列表移除自己，防止内存泄漏
@@ -762,17 +763,16 @@ public class ClUser <: NetUser {
                 let csLen = Int64(c.callsign.toRuneArray().size)
                 let isObs = (csLen > 4 && substrFrom(c.callsign, csLen - 4) == "_OBS")
                 if (!isObs && durationMin > 0) {
-                    statsLock.lock()
-                    try {
-                        let line = "${c.cid}:${c.callsign}:${mgmtime()}:${ctype}:${durationMin}\n"
-                        var content = line
-                        try { content = String.fromUtf8(File.readFrom(Path("stats.txt"))) + line } catch (e: Exception) {}
-                        File.writeTo(Path("stats.txt"), content.toArray())
-                        dolog(L_INFO, "Stats saved: ${c.callsign} ${durationMin}min")
-                    } catch (e: Exception) {
-                        dolog(L_ERR, "Stats write error: ${e}")
+                    match (gMysql) {
+                        case Some(db) =>
+                            if (db.isConnected()) {
+                                if (!db.saveOnlineTime(c.cid, ctype, durationMin)) {
+                                    dolog(L_WARNING, "DB stats failed for ${c.callsign}, fallback to file")
+                                    _saveStatsToFile(c.cid, c.callsign, ctype, durationMin)
+                                }
+                            } else { _saveStatsToFile(c.cid, c.callsign, ctype, durationMin) }
+                        case None => _saveStatsToFile(c.cid, c.callsign, ctype, durationMin)
                     }
-                    statsLock.unlock()
                 }
                 this.iface.sendRemoveClient(c)
                 serverInterface?.sendRmClient("*", c.callsign, None)
@@ -803,4 +803,19 @@ func isBlockedFlight(callsign: String): Bool {
         if (cs.contains(num)) { return true }
     }
     return false
+}
+
+// 回退：当 MySQL 不可用时将统计写入文件
+func _saveStatsToFile(cid: String, callsign: String, ctype: String, durationMin: Int64): Unit {
+    statsLock.lock()
+    try {
+        let line = "${cid}:${callsign}:${mgmtime()}:${ctype}:${durationMin}\n"
+        var content = line
+        try { content = String.fromUtf8(File.readFrom(Path("stats.txt"))) + line } catch (e: Exception) {}
+        File.writeTo(Path("stats.txt"), content.toArray())
+        dolog(L_INFO, "Stats file fallback: ${callsign} ${durationMin}min")
+    } catch (e: Exception) {
+        dolog(L_ERR, "Stats file error: ${e}")
+    }
+    statsLock.unlock()
 }

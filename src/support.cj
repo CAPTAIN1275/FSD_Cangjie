@@ -103,3 +103,12 @@ func randInt(max: Int64): Int64 {
     return if (max <= 0) { _randState } else { _randState % max }
 }
 func randFloat(): Float64 { return Float64(randInt(1000000)) / 1000000.0 }
+
+// 格式化浮点数为 1 位小数（如 505.5）
+func formatFloat(v: Float64): String {
+    let i = Int64(v * 10.0)
+    let whole = i / 10
+    let frac = i % 10
+    if (frac == 0) { return "${whole}" }
+    return "${whole}.${frac}"
+}
