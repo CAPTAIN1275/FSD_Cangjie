@@ -9,6 +9,7 @@ nohup.out
 # === 构建产物 ===
 target/
 build/
+build-script-cache/
 unix/FSD_Cangjie
 unix/FSD_Cangjie.bin
 unix/admin
