@@ -7,7 +7,7 @@
 
 > 🏅 本项目已入选 **AtomGit G-Star 孵化计划**。
 
-📖 **在线文档**：<在此填写文档站地址>（使用指南 · 配置 · 部署 · FSD 通讯协议参考 · HTTP API）
+📖 **在线文档**：[docs.ldpfly.cn](https://docs.ldpfly.cn) （使用指南 · 配置 · 部署 · FSD 通讯协议参考 · HTTP API）
 
 基于 **华为仓颉（Cangjie）** 语言的飞行模拟联机服务器（Flight Simulator Daemon）。
 移植自 Marty Bochane 的 **原版 FSD**（公共领域），用仓颉重构并扩展，可运行于 **Linux** 与 **HarmonyOS / OpenHarmony（aarch64）**。
