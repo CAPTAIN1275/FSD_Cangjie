@@ -8,6 +8,7 @@
   <img alt="License" src="https://img.shields.io/badge/License-Apache--2.0-0078D7?style=flat-square&logo=apache&logoColor=white">
   <img alt="Cangjie" src="https://img.shields.io/badge/Cangjie-1.2.0-0078D7?style=flat-square">
   <img alt="HarmonyOS" src="https://img.shields.io/badge/HarmonyOS-000000?style=flat-square&logo=harmonyos&logoColor=white">
+  <img alt="Windows" src="https://img.shields.io/badge/Windows-0078D6?style=flat-square&logo=windows&logoColor=white">
   <img alt="Linux" src="https://img.shields.io/badge/Linux-FCC624?style=flat-square&logo=linux&logoColor=black">
   <img alt="MySQL" src="https://img.shields.io/badge/MySQL-4479A1?style=flat-square&logo=mysql&logoColor=white">
 </p>
