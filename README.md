@@ -1,12 +1,11 @@
-<p align="center">
-  <a href="https://gitcode.com/CAPTAIN1275/FSD_Cangjie"><img alt="AtomGit G-Star" src="https://gitcode.com/CAPTAIN1275/FSD_Cangjie/star/new_badge.svg"></a>
-</p>
-
 # FSD_Cangjie
 
-![License](https://img.shields.io/badge/license-Apache--2.0-blue)
-![Language](https://img.shields.io/badge/language-Cangjie-orange)
-![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20HarmonyOS-informational)
+<p align="center">
+  <a href="https://gitcode.com/CAPTAIN1275/FSD_Cangjie"><img alt="AtomGit G-Star" src="https://gitcode.com/CAPTAIN1275/FSD_Cangjie/star/new_badge.svg"></a>
+  <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue">
+  <img alt="Language" src="https://img.shields.io/badge/language-Cangjie-orange">
+  <img alt="Platform" src="https://img.shields.io/badge/platform-Linux%20%7C%20HarmonyOS-informational">
+</p>
 
 📖 **在线文档**：[docs.ldpfly.cn](https://docs.ldpfly.cn) （使用指南 · 配置 · 部署 · FSD 通讯协议参考 · HTTP API）
 
