@@ -5,9 +5,11 @@
 </p>
 
 <p align="center">
-  <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue">
-  <img alt="Language" src="https://img.shields.io/badge/language-Cangjie-orange">
-  <img alt="Platform" src="https://img.shields.io/badge/platform-Linux%20%7C%20HarmonyOS-informational">
+  <img alt="License" src="https://img.shields.io/badge/License-Apache--2.0-0078D7?style=flat-square&amp;logo=apache&amp;logoColor=white">
+  <img alt="Cangjie" src="https://img.shields.io/badge/Cangjie-1.2.0-0078D7?style=flat-square">
+  <img alt="HarmonyOS" src="https://img.shields.io/badge/HarmonyOS-000000?style=flat-square&amp;logo=harmonyos&amp;logoColor=white">
+  <img alt="Linux" src="https://img.shields.io/badge/Linux-FCC624?style=flat-square&amp;logo=linux&amp;logoColor=black">
+  <img alt="MySQL" src="https://img.shields.io/badge/MySQL-4479A1?style=flat-square&amp;logo=mysql&amp;logoColor=white">
 </p>
 
 📖 **在线文档**：[docs.ldpfly.cn](https://docs.ldpfly.cn) （使用指南 · 配置 · 部署 · FSD 通讯协议参考 · HTTP API）
