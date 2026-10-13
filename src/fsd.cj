@@ -19,16 +19,26 @@ var blockedLock = Mutex()
 public class FsdEngine {
     var certFile: ?String; var whazzupFile: ?String
     var prevNotify: Int64; var prevLagCheck: Int64; var prevCertCheck: Int64; var prevWhazzup: Int64
+    var whazzupDirty: Bool
     var prevHeartbeat: Int64
+    var prevDbCheck: Int64
     var prevWindDelta: Int64
+    var prevTrailSave: Int64
+    var prevUserCheck: Int64
+    var trailEnabled: Bool
     var voiceSrv: ?VoiceServer
     var timer: Int64; var clientPort: Int32; var serverPort: Int32; var systemPort: Int32
 
     public init(configFile: String) {
         this.certFile = None; this.whazzupFile = None
         this.prevNotify = 0; this.prevLagCheck = 0; this.prevCertCheck = 0; this.prevWhazzup = 0
+        this.whazzupDirty = false
         this.prevHeartbeat = 0
         this.prevWindDelta = 0
+        this.prevTrailSave = 0
+        this.prevUserCheck = 0
+        this.trailEnabled = false
+        this.prevDbCheck = 0
         this.voiceSrv = None
         this.timer = 0; this.clientPort = DEFAULT_CLIENT_PORT
         this.serverPort = DEFAULT_SERVER_PORT; this.systemPort = DEFAULT_SYSTEM_PORT
@@ -41,6 +51,7 @@ public class FsdEngine {
         this.prevNotify = mgmtime(); this.prevLagCheck = mgmtime()
         this.timer = mgmtime(); this.prevWhazzup = mgmtime()
         this.prevHeartbeat = mgmtime()
+        this.prevDbCheck = mgmtime()
         this.prevWindDelta = mgmtime()
     }
 
@@ -55,6 +66,7 @@ public class FsdEngine {
                 let bf = match (g.getEntry("blocked_flights")) { case Some(e) => e.getData(); case None => "" }
                 blockedFlights = bf
                 if (bf != "") { dolog(L_INFO, "Blocked flights: ${bf}") }
+                match (g.getEntry("maxclients")) { case Some(e) => let mc = e.getInt(); if (mc > 0) { MAX_CLIENTS = Int32(mc) }; dolog(L_INFO, "Max clients: ${MAX_CLIENTS}"); case None => () }
             case None => ()
         }; case None => () }
         configMyServer()
@@ -105,12 +117,21 @@ public class FsdEngine {
                 let fpda = match (g.getEntry("col_fp_data")) { case Some(e) => e.getData(); case None => "fp_data" }
                 let db = MysqlDB(host, user, password, name, port, tu, tf, cuc, cup, cupr, fpc, fpid, fpda)
                 if (db.connect()) {
+                    db.initAllTables()
                     db.loadCertificates()
                 } else {
                     dolog(L_INFO, "MySQL unavailable, using cert.txt only")
                 }
                 gMysql = db
             case None => dolog(L_INFO, "No [database] config, using cert.txt only")
+        }; case None => () }
+        // 读取轨迹开关
+        match (configMan) { case Some(cm) => match (cm.getGroup("trails")) {
+            case Some(g) => match (g.getEntry("enabled")) {
+                case Some(e) => this.trailEnabled = (e.getData() == "true" || e.getData() == "1")
+                case None => ()
+            }
+            case None => ()
         }; case None => () }
     }
 
@@ -136,6 +157,8 @@ public class FsdEngine {
         systemInterface?.setPrompt("${myServer?.ident ?? "FSD"}> ") 
         clientInterface?.setFlood(50000); clientInterface?.setOutBufLimit(100000)
         clientInterface?.start(); serverInterface?.start(); systemInterface?.start()
+        // 启动时清理 whazzup 旧数据，初始化轨迹日志文件
+        writeWhazzUp()
     }
 
     public func makeConnections(): Unit {
@@ -202,13 +225,10 @@ public class FsdEngine {
 
     public func run(): Int32 {
         configMan?.run()
-        // 每次循环重新读取禁止航班号（支持热重载）
         match (configMan) { case Some(cm) => match (cm.getGroup("system")) {
             case Some(g) =>
-                let bf = match (g.getEntry("blocked_flights")) { case Some(e) => e.getData(); case None => "" }
-                blockedLock.lock()
-                blockedFlights = bf
-                blockedLock.unlock()
+                let bf = g.getEntry("blocked_flights")?.getData() ?? ""
+                synchronized(blockedLock) { blockedFlights = bf }
             case None => ()
         }; case None => () }
         let now = mgmtime()
@@ -222,7 +242,7 @@ public class FsdEngine {
         if ((now - this.prevNotify) > NOTIFYCHECK) { match (myServer) { case Some(s) => serverInterface?.sendServerNotify("*", s, None); case None => () }; this.prevNotify = now }
         if ((now - this.prevLagCheck) > LAGCHECK) { serverInterface?.sendPing("*", "-1 ${now}"); this.prevLagCheck = now }
         if ((now - this.prevCertCheck) > CERTFILECHECK) { readCert(); this.prevCertCheck = now }
-        if ((now - this.prevWhazzup) >= WHAZZUPCHECK) { writeWhazzUp(); this.prevWhazzup = now }
+        if (this.whazzupDirty || (now - this.prevWhazzup) >= WHAZZUPCHECK) { writeWhazzUp(); this.prevWhazzup = now }
         if ((now - this.prevHeartbeat) >= 3600) {
             this.prevHeartbeat = now
             let cc = clientCount()
@@ -238,6 +258,11 @@ public class FsdEngine {
                 case None => ()
             }
         }
+        // MySQL keepalive — 每 60 秒健康检查一次，检测真实断线并防空闲断线
+        if ((now - this.prevDbCheck) >= 60) {
+            this.prevDbCheck = now
+            match (gMysql) { case Some(db) => db.checkAlive(); db.ensureConnected(); case None => () }
+        }
         // Wind Delta — 每 70 秒广播随机风变化（合并为单条消息减少流量）
         if ((now - this.prevWindDelta) >= WINDDELTATIMEOUT) {
             this.prevWindDelta = now
@@ -245,7 +270,7 @@ public class FsdEngine {
             var windMsg = StringBuilder()
             let _keys = getClientKeys()
             for (_i in 0.._keys.size) {
-                let c = clientMap.get(_keys[_i]).getOrThrow()
+                let c = match (clientMap.get(_keys[_i])) { case Some(x) => x; case None => continue }
                 let wd = randInt(360)
                 let ws = randInt(50)
                 let wg = if (randInt(10) > 3) { randInt(30) } else { 0 }
@@ -253,19 +278,54 @@ public class FsdEngine {
             }
             clientInterface?.broadcastToAll(windMsg.toString())
         }
-        // 飞行记录刷盘（每 10 秒）
+        // 飞行记录刷盘：必须用「追加写」。
+        // 旧写法每次读取整个 replay 文件、拼接后再整体写回，文件随时间增长会变成平方级开销，
+        // 且占用主循环与 replayLock，导致跑久了整体变慢、whazzup 写入也变慢。
         replayLock.lock()
         if (replayBuf != "") {
             let dateStr = sprintGmtDate(mgmtime())
-            var existing = ""
-            try { existing = String.fromUtf8(File.readFrom(Path("replay_${dateStr}.txt"))) } catch (_: Exception) {}
             try {
-                File.writeTo(Path("replay_${dateStr}.txt"), (existing + replayBuf).toArray())
+                File.appendTo(Path("replay_${dateStr}.txt"), replayBuf.toArray())
                 replayBuf = ""
             } catch (_: Exception) {}
         }
         replayLock.unlock()
+        // 飞行轨迹保存（每 3 秒） + 断线清理（每 30 秒）
+        if (this.trailEnabled && (now - this.prevTrailSave >= 3)) {
+            this.prevTrailSave = now
+            dolog(L_DEBUG, "Trail: enabled=${this.trailEnabled} mysql=${match (gMysql) { case Some(db) => db.isConnected(); case None => false }}")
+            match (gMysql) {
+                case Some(db) =>
+                    if (db.ensureConnected()) {
+                        let _keys = getClientKeys()
+                        var saved = 0
+                        var activeCallsigns = HashSet<String>()
+                        for (_i in 0.._keys.size) {
+                            if (let Some(c) <- clientMap.get(_keys[_i])) {
+                            dolog(L_DEBUG, "Trail pilot: ${c.callsign} lat=${c.lat} lon=${c.lon} alt=${c.altitude}")
+                            if (c.isPilot() && c.lat != 0.0 && c.lon != 0.0) {
+                                db.saveFlightTrail(c.callsign, c.lat, c.lon, c.altitude, c.groundspeed, Int32(c.headingCalc))
+                                saved += 1
+                                activeCallsigns.add(c.callsign)
+                            }
+                            }
+                        }
+                        dolog(L_DEBUG, "Trail: ${saved} positions written for ${_keys.size} clients")
+                        if (now % 30 == 0) { db.cleanFlightTrails(activeCallsigns, Int32(now / 1000)) }
+} else { dolog(L_INFO, "Trail: MySQL not connected") }
+                case None => dolog(L_INFO, "Trail: gMysql is None")
+            }
+        }
         checkServerTimeouts(now); checkClientTimeouts(now)
+        // 接口连接表清理（防御）：每 30 秒回收长时间无数据的连接，
+        // 避免任何残留导致 users 列表膨胀、accept 停摆。
+        if ((now - this.prevUserCheck) >= 30) {
+            this.prevUserCheck = now
+            let idle = USERTIMEOUT
+            clientInterface?.checkTimeouts(idle)
+            serverInterface?.checkTimeouts(idle)
+            systemInterface?.checkTimeouts(idle)
+        }
     }
 
     public func checkServerTimeouts(now: Int64): Unit {
@@ -281,7 +341,7 @@ public class FsdEngine {
         var toRemove = ArrayList<String>()
         let _keys = getClientKeys()
         for (_i in 0.._keys.size) {
-            let cl = clientMap.get(_keys[_i]).getOrThrow()
+            let cl = match (clientMap.get(_keys[_i])) { case Some(x) => x; case None => continue }
             if (!clLocal(cl) && (now - cl.alive) > limit) {
                 dolog(L_INFO, "Cli timeout: ${cl.callsign}")
                 toRemove.add(cl.callsign.toUpper())
@@ -295,7 +355,10 @@ public class FsdEngine {
         }
     }
 
+    public func markWhazzupDirty(): Unit { this.whazzupDirty = true }
+
     public func writeWhazzUp(): Unit {
+        this.whazzupDirty = false
         match (this.whazzupFile) {
             case Some(path) =>
                 let now = mgmtime()
@@ -311,7 +374,7 @@ public class FsdEngine {
                 wz.append("!CLIENTS\n")
                 let _keys = getClientKeys()
                 for (_i in 0.._keys.size) {
-                    let c = clientMap.get(_keys[_i]).getOrThrow()
+                    let c = match (clientMap.get(_keys[_i])) { case Some(x) => x; case None => continue }
                     // dataseg1: callsign:cid:realname:type
                     wz.append("${c.callsign}:${c.cid}:${c.realname}:${if (c.isAtc()) {"ATC"} else {"PILOT"}}")
                     // dataseg2: frequency (ATC only, format: :1xx.xxx)
@@ -354,6 +417,16 @@ public class FsdEngine {
     }
 
     public func stop(): Unit { clientInterface?.stop(); serverInterface?.stop(); systemInterface?.stop(); dolog(L_INFO, "FSD stopped") }
+
+    // 优雅停机：先通知所有客户端断开（$!!，客户端会识别并自行离开），冲刷后停接口
+    public func gracefulShutdown(): Unit {
+        dolog(L_INFO, "Graceful shutdown: notifying all clients")
+        // 先发可见文本，再发 $!! 并优雅关闭（保证两者都送达）
+        clientInterface?.broadcastToAll("#TMserver:*:FSD server is restarting, please reconnect shortly\r\n")
+        clientInterface?.notifyAllShutdown("Server restarting, please reconnect")
+        sleep(1500 * Duration.millisecond)
+        this.stop()
+    }
 }
 
 func gStr(group: ConfigGroup, key: String, def: String): String { match (group.getEntry(key)) { case Some(e) => e.getData(); case None => def } }

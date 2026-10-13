@@ -1,0 +1,11 @@
+[package]
+  cjc-version = "1.2.0"
+  name = "admin"
+  description = "FSD 3010 console client for HarmonyOS"
+  version = "1.0.0"
+  output-type = "executable"
+  compile-option = "--output=./admin -O2 --sysroot /home/captain1275/ohos-sysroot -Woff unused"
+
+[target.aarch64-linux-ohos]
+  compile-option = "--output=./admin -O2 --sysroot /home/captain1275/ohos-sysroot -Woff unused"
+  link-option = "--sysroot=/home/captain1275/ohos-sysroot -L/home/captain1275/ohos-sysroot/usr/lib/aarch64-linux-ohos -l:libcangjie-std-unicode.a"

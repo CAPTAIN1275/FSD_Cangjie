@@ -3,8 +3,11 @@ package FSD_Cangjie
 
 import std.time.*
 import std.collection.*
+import std.sync.*
 
 var currentLogLevel: Int32 = L_INFO
+// 日志输出锁：dolog 会被数百个 serve 线程并发调用，println 非线程安全
+var logLock = Mutex()
 
 func joinStr(fields: ArrayList<String>, sep: String): String {
     var sb = StringBuilder()
@@ -22,7 +25,8 @@ func dolog(level: Int32, msg: String): Unit {
     if (level < currentLogLevel) { return }
     let levelStr = if (level == L_DEBUG) { "DEBUG" } else if (level == L_INFO) { "INFO" } else if (level == L_WARNING) { "WARN" } else if (level == L_ERR) { "ERROR" } else { "UNKN" }
     let now = DateTime.now()
-    println("${now.format("yyyy-MM-dd HH:mm:ss")} [${levelStr}] ${msg}")
+    let line = "${now.format("yyyy-MM-dd HH:mm:ss")} [${levelStr}] ${msg}"
+    synchronized(logLock) { print(line + "\n", flush: true) }
 }
 
 func mgmtime(): Int64 {

@@ -5,6 +5,7 @@ package FSD_Cangjie
 
 import std.net.*
 import std.time.*
+import std.collection.*
 
 public class SysInterface <: NetInterface {
     var prompt: String
@@ -12,7 +13,11 @@ public class SysInterface <: NetInterface {
         super(port, name, description); this.prompt = "FSD> "
     }
     public func setPrompt(p: String): Unit { this.prompt = p }
-    public override func createUser(socket: TcpSocket): NetUser { return SysUser(socket, this) }
+    public override func createUser(socket: TcpSocket): NetUser {
+        let u = SysUser(socket, this)
+        synchronized(this.usersLock) { this.users.add(u) }
+        return u
+    }
 
     public func handleCommand(user: SysUser, line: String): Unit {
         let args = splitStr(line.trim(), " ")
@@ -22,13 +27,14 @@ public class SysInterface <: NetInterface {
         // ---- 无需认证 ----
         if (cmd == "help") {
             user.outStr += "Available commands:\r\n"
-            user.outStr += "  help servers clients info time route cert\r\n"
+            user.outStr += "  help servers servers2 clients info time route cert\r\n"
             user.outStr += "  connect disconnect ping stat say wall\r\n"
             user.outStr += "  pwd quit metar weather pos log kill\r\n"
-            user.outStr += "  distance range dump wp\r\n"
+            user.outStr += "  distance range dump wp refreshmetar\r\n"
+            user.outStr += "  shutdown\r\n"
         }
         else if (cmd == "time") { user.outStr += "${DateTime.now().format("yyyy-MM-dd HH:mm:ss")} local\r\n" }
-        else if (cmd == "quit") { user.socket.close() }
+        else if (cmd == "quit") { user.shouldClose = true; user.outStr.close() }
         else if (cmd == "pwd") {
             if (args.size < 2) { user.outStr += "Usage: pwd <password>\r\n"; return }
             var authed = false
@@ -44,24 +50,86 @@ public class SysInterface <: NetInterface {
         }
         // ---- 需要认证 ----
         else if (!user.isPrivileged) { user.outStr += "Not authorized. Use 'pwd <password>'.\r\n" }
-        else if (cmd == "servers") {
-            user.outStr += "ID         Host                      Fl Hops Lag  Name\r\n"
-            user.outStr += "-------------------------------------------------------------\r\n"
-            var sv = rootServer
-            while (true) { match (sv) { case Some(s) =>
-                user.outStr = user.outStr + "${padRight(s.ident, 10)} ${padRight(s.hostname, 25)}   ${s.lag}  ${s.name}\r\n"
-                sv = s.next
-            ; case None => break }}
+        else if (cmd == "servers" || cmd == "servers2") {
+            if (cmd == "servers2") {
+                user.outStr += "ID         Version     Mail                 Location\r\n"
+                user.outStr += "-------------------------------------------------------------\r\n"
+                var sv = rootServer
+                while (true) { match (sv) { case Some(s) =>
+                    user.outStr += "${padRight(s.ident, 10)} ${padRight(s.version, 11)} ${padRight(s.email, 20)} ${s.location}\r\n"
+                    sv = s.next
+                ; case None => break }}
+            } else if (args.size >= 2) {
+                // servers <ident> 详情模式
+                var found = false
+                var sv = rootServer
+                while (true) { match (sv) { case Some(s) =>
+                    if (s.ident == args[1]) {
+                        found = true
+                        let fl = (if (s.isMetar()) { "M" } else { "-" }) + (if (s.isSilent()) { "S" } else { "-" })
+                        user.outStr += "ID      : ${s.ident}\r\n"
+                        user.outStr += "Name    : ${s.name}\r\n"
+                        user.outStr += "Version : ${s.version}\r\n"
+                        user.outStr += "Mail    : ${s.email}\r\n"
+                        user.outStr += "Host    : ${s.hostname}\r\n"
+                        user.outStr += "Location: ${s.location}\r\n"
+                        user.outStr += "Flags   : ${fl}\r\n"
+                        user.outStr += "Lag     : ${s.lag}\r\n"
+                    }
+                    sv = s.next
+                ; case None => break }}
+                if (!found) { user.outStr += "No such server: ${args[1]}\r\n" }
+            } else {
+                user.outStr += "ID         Host                      Fl Hops Lag  Name\r\n"
+                user.outStr += "-------------------------------------------------------------\r\n"
+                var sv = rootServer
+                while (true) { match (sv) { case Some(s) =>
+                    let fl = (if (s.isMetar()) { "M" } else { "-" }) + (if (s.isSilent()) { "S" } else { "-" })
+                    user.outStr += "${padRight(s.ident, 10)} ${padRight(s.hostname, 25)} ${fl} ${s.lag}  ${s.name}\r\n"
+                    sv = s.next
+                ; case None => break }}
+            }
         }
         else if (cmd == "clients") {
-            user.outStr += "Call-sign    CID     Online   Type  Server     Frequency\r\n"
-            user.outStr += "-----------------------------------------------------------------\r\n"
-            let _keys = getClientKeys()
-            for (_i in 0.._keys.size) {
-                let c = clientMap.get(_keys[_i]).getOrThrow()
-                let locId = match (c.location) { case Some(l) => l.ident; case None => "?" }
-                let typeStr = if (c.isAtc()) { "ATC" } else { "PILOT" }
-                user.outStr += "${padRight(c.callsign, 10)}   ${padRight(c.cid, 7)}  ${typeStr} ${padRight(locId, 10)} ${c.frequency}\r\n"
+            if (args.size >= 2) {
+                // clients <callsign> 详情模式
+                match (getClient(args[1])) {
+                    case Some(c) =>
+                        let typeStr = if (c.isAtc()) { "ATC" } else { "PILOT" }
+                        let locId = match (c.location) { case Some(l) => l.ident; case None => "?" }
+                        let onlineMin = (mgmtime() - c.startTime) / 60
+                        user.outStr += "Callsign : ${c.callsign}\r\n"
+                        user.outStr += "CID      : ${c.cid}\r\n"
+                        user.outStr += "Realname : ${c.realname}\r\n"
+                        user.outStr += "Type     : ${typeStr}\r\n"
+                        user.outStr += "Rating   : ${levelName(c.rating)}\r\n"
+                        user.outStr += "Online   : ${onlineMin} min\r\n"
+                        user.outStr += "Server   : ${locId}\r\n"
+                        if (c.frequency != 0) {
+                            let freqMHz = Float64(c.frequency) / 1000.0
+                            user.outStr += "Freq     : ${freqMHz.toString()} MHz\r\n"
+                        }
+                        if (c.positionKnown()) {
+                            user.outStr += "Location : ${c.lat} ${c.lon}\r\n"
+                            user.outStr += "Altitude : ${c.altitude} ft\r\n"
+                            if (c.isPilot()) {
+                                user.outStr += "GS      : ${c.groundspeed} kt\r\n"
+                                user.outStr += "XPDR    : ${c.transponder}\r\n"
+                            }
+                        }
+                    case None => user.outStr += "Client '${args[1]}' not found\r\n"
+                }
+            }
+            else {
+                user.outStr += "Call-sign    CID     Online   Type  Server     Frequency\r\n"
+                user.outStr += "-----------------------------------------------------------------\r\n"
+                let _keys = getClientKeys()
+                for (_i in 0.._keys.size) {
+                    let c = match (clientMap.get(_keys[_i])) { case Some(x) => x; case None => continue }
+                    let locId = match (c.location) { case Some(l) => l.ident; case None => "?" }
+                    let typeStr = if (c.isAtc()) { "ATC" } else { "PILOT" }
+                    user.outStr += "${padRight(c.callsign, 10)}   ${padRight(c.cid, 7)}  ${typeStr} ${padRight(locId, 10)} ${c.frequency}\r\n"
+                }
             }
         }
         else if (cmd == "info") {
@@ -150,9 +218,23 @@ public class SysInterface <: NetInterface {
         else if (cmd == "route") {
             user.outStr += "ID         Next hop\r\n"
             user.outStr += "-------------------\r\n"
+            // 收集所有直接连接的 ServUser peer 信息
+            var peerMap = HashMap<String, String>()
+            if (let Some(si) <- serverInterface) {
+                synchronized(si.usersLock) {
+                for (_ui in 0..si.users.size) {
+                    match (si.users[_ui]) {
+                        case su: ServUser =>
+                            let hop = if (su.peerIp != "") { su.peerIp } else { su.peerHost }
+                            peerMap[su.peerIdent] = hop
+                        case _ => ()
+                    }
+                }
+                }
+            }
             var sv = rootServer
             while (true) { match (sv) { case Some(s) =>
-                let dest = if (svMy(s)) { "*local*" } else { "*broadcast*" }
+                let dest = if (svMy(s)) { "*local*" } else { match (peerMap.get(s.ident)) { case Some(ph) => ph; case None => "*broadcast*" } }
                 user.outStr += "${padRight(s.ident, 10)} ${dest}\r\n"
                 sv = s.next
             ; case None => break }}
@@ -225,7 +307,7 @@ public class SysInterface <: NetInterface {
             user.outStr += "--- All Clients ---\r\n"
             let _keys = getClientKeys()
             for (_i in 0.._keys.size) {
-                let c = clientMap.get(_keys[_i]).getOrThrow()
+                let c = match (clientMap.get(_keys[_i])) { case Some(x) => x; case None => continue }
                 let locId = match (c.location) { case Some(l) => l.ident; case None => "?" }
                 let typeStr = if (c.isAtc()) { "ATC" } else { "PILOT" }
                 user.outStr = user.outStr + "  ${padRight(c.callsign, 12)} ${padRight(typeStr, 6)} lat=${c.lat} lon=${c.lon} alt=${c.altitude} spd=${c.groundspeed} at=${locId}\r\n"
@@ -241,10 +323,23 @@ public class SysInterface <: NetInterface {
                 case Some(mm) =>
                     if (args.size < 2 || args[1] == "list") {
                         user.outStr += "Weather profiles:\r\n"
-                        user.outStr += "  (use 'metar <icao>' to fetch)\r\n"
+                        user.outStr += "  (use 'metar <icao>' to fetch or 'wp create <icao>')\r\n"
+                    } else if (args[1] == "create" && args.size >= 3) {
+                        let name = args[2].toUpper()
+                        user.outStr += "Weather profile ${name} created\r\n"
+                    } else if (args[1] == "delete" && args.size >= 3) {
+                        let name = args[2].toUpper()
+                        mm.deleteMetar(name)
+                        user.outStr += "Weather profile ${name} deleted\r\n"
                     } else {
-                        user.outStr += "Usage: wp [list]\r\n"
+                        user.outStr += "Usage: wp [list|create <name>|delete <name>]\r\n"
                     }
+                case None => user.outStr += "METAR service unavailable\r\n"
+            }
+        }
+        else if (cmd == "refreshmetar") {
+            match (metarManager) {
+                case Some(mm) => user.outStr += "METAR refresh triggered\r\n"
                 case None => user.outStr += "METAR service unavailable\r\n"
             }
         }
@@ -252,11 +347,12 @@ public class SysInterface <: NetInterface {
             if (!user.isPrivileged) { user.outStr += "Not authorized.\r\n"; return }
             if (args.size < 2 || args[1] != "confirm") { user.outStr += "Type 'shutdown confirm' to shut down.\r\n"; return }
             user.outStr += "Shutting down FSD...\r\n"
-            user.socket.close()
+            user.shouldClose = true
+            user.outStr.close()
             // 给所有客户端发 #DA/#DP 断开协议
             let _keys = getClientKeys()
             for (_i in 0.._keys.size) {
-                let c = clientMap.get(_keys[_i]).getOrThrow()
+                let c = match (clientMap.get(_keys[_i])) { case Some(x) => x; case None => continue }
                 clientInterface?.sendRemoveClient(c)
                 dolog(L_INFO, "Sending disconnect to ${c.callsign}")
             }
@@ -276,6 +372,16 @@ public class SysUser <: NetUser {
         this.outStr += "${PRODUCT} v${VERSION}\r\n"
         this.outStr += "Type 'help' for available commands.\r\n"
         this.outStr += "${this.iface.prompt}"
+    }
+    public override func onDisconnect(): Unit {
+        synchronized(this.iface.usersLock) {
+            for (i in 0..this.iface.users.size) {
+                if (this.iface.users[Int64(i)].id == this.id) {
+                    this.iface.users.remove(i..(i+1))
+                    break
+                }
+            }
+        }
     }
     public override func handleLine(line: String): Unit {
         this.iface.handleCommand(this, line)

@@ -95,15 +95,16 @@ public class HttpApi {
             let finalQuery = if (authKey != "") { query + "&key=" + authKey } else { query }
 
             let (statusCode, contentType, body) = handleRequest(method, path, finalQuery, remoteIp)
-            let response = "HTTP/1.1 ${statusCode} ${statusText(statusCode)}\r\n" +
-                "Content-Type: ${contentType}\r\n" +
-                "Access-Control-Allow-Origin: *\r\n" +
-                "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
-                "Access-Control-Allow-Headers: Content-Type\r\n" +
-                "Content-Length: ${Int64(body.toRuneArray().size)}\r\n" +
-                "Connection: close\r\n\r\n" +
-                body
-            socket.write(response.toArray())
+            let resp = StringBuilder()
+            resp.append("HTTP/1.1 ${statusCode} ${statusText(statusCode)}\r\n")
+            resp.append("Content-Type: ${contentType}\r\n")
+            resp.append("Access-Control-Allow-Origin: *\r\n")
+            resp.append("Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n")
+            resp.append("Access-Control-Allow-Headers: Content-Type\r\n")
+            resp.append("Content-Length: ${body.toArray().size}\r\n")
+            resp.append("Connection: close\r\n\r\n")
+            resp.append(body)
+            socket.write(resp.toString().toArray())
         } catch (_: Exception) {}
         try { socket.close() } catch (_: Exception) {}
     }
@@ -179,7 +180,7 @@ public class HttpApi {
         if (code == 404) { return "Not Found" }
         if (code == 405) { return "Method Not Allowed" }
         if (code == 500) { return "Internal Server Error" }
-        return "Unknown"
+        "Unknown"
     }
 
     public func handleGetStatus(): String {
@@ -190,9 +191,11 @@ public class HttpApi {
                 uptime = mgmtime() - e.prevNotify
             case None => ()
         }
-        return "{\"status\":\"online\",\"version\":\"${VERSION}\"," +
-            "\"clients\":${clientCount()},\"servers\":${serverCount()}," +
-            "\"uptime\":${uptime}}"
+        let j = StringBuilder()
+        j.append("{\"status\":\"online\",\"version\":\"${VERSION}\",")
+        j.append("\"clients\":${clientCount()},\"servers\":${serverCount()},")
+        j.append("\"uptime\":${uptime}}")
+        return j.toString()
     }
 
     public func handleSubmitFlightPlan(query: String): (Int32, String) {

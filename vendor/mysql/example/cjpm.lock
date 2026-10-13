@@ -1,0 +1,4 @@
+version = 0
+
+[requires]
+  jlog = {version = "0.0.1", git = "https://gitcode.com/service/jlog.git", commitId = "410cd598e4c0c063a48e08babb079d0bed7c20f9", branch = "main"}

@@ -137,7 +137,6 @@ public class MetarManager {
 
     // 发送 METAR 回客户端
     private func sendMetarToClient(client: String, icao: String, data: String): Unit {
-        // 解析请求的呼号：client 格式为 "%callsign"
         let callsign = if (client.startsWith("%")) {
             substrFrom(client, 1)
         } else {
@@ -145,8 +144,8 @@ public class MetarManager {
         }
         match (clientInterface) {
             case Some(ci) =>
-                // 格式：#TMserver:callsign:METAR for ICAO: data
-                ci.broadcastToAll("#TMserver:${callsign}:METAR for ${icao}: ${data}\r\n")
+                // C 版 sendmetar: $ARserver:callsign:METAR:data
+                ci.broadcastToAll("\$ARserver:${callsign}:METAR:${data}\r\n")
             case None => ()
         }
     }

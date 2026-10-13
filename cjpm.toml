@@ -1,5 +1,5 @@
 [package]
-  cjc-version = "1.1.3"
+  cjc-version = "1.2.0"
   name = "FSD_Cangjie"
   organization = ""
   description = "FSD Flight Simulator Daemon For Cangjie"
@@ -7,25 +7,25 @@
   target-dir = ""
   script-dir = ""
   output-type = "executable"
-  compile-option = "--output=FSD_Cangjie"
+   compile-option = "--output=FSD_Cangjie -O2 -Woff unused"
   override-compile-option = ""
   link-option = "-lstdx.crypto.common -lstdx.encoding.base64 -lstdx.encoding.hex -lstdx.crypto.crypto"
   package-configuration = {}
 
 [target.x86_64-w64-mingw32]
-  compile-option = "--output=FSD_Cangjie -lcrypt32"
+   compile-option = "--output=FSD_Cangjie -lcrypt32 -Woff unused"
   link-option = "-l:libcangjie-std-unicode.a -lstdx.crypto.common -lstdx.encoding.base64 -lstdx.encoding.hex -lstdx.crypto.crypto"
   [target.x86_64-w64-mingw32.bin-dependencies]
     path-option = ["D:\\Cangjie\\static\\stdx"]
 
 [target.x86_64-unknown-linux-gnu]
-  compile-option = "--output=./FSD_Cangjie -ldl --static --static-std --static-libs"
+   compile-option = "--output=./FSD_Cangjie -O2 -ldl --static --static-std --static-libs -Woff unused"
   link-option = "-l:libcangjie-std-unicode.a -lstdx.crypto.common -lstdx.encoding.base64 -lstdx.encoding.hex -lstdx.crypto.crypto"
   [target.x86_64-unknown-linux-gnu.bin-dependencies]
     path-option = ["/opt/cangjie/linux_x86_64_cjnative/static/stdx"]
 
 [dependencies]
-mysql = { git = "https://gitcode.com/service/cangjie-mysql-driver.git", branch = "main" }
+mysql = { path = "vendor/mysqltext" }
 
 [target.x86_64-unknown-linux-gnu.dependencies]
 stdx = { path = "/opt/cangjie/linux_x86_64_cjnative/static/stdx" }

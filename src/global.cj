@@ -46,8 +46,9 @@ let LEV_SUP_ADMIN: Int32 = 11
 let LEV_ADMIN: Int32 = 12
 let LEV_MAX: Int32 = 12
 
-let CLIENT_ATC: Int32 = 0
-let CLIENT_PILOT: Int32 = 1
+let CLIENT_ATC: Int32 = 1
+let CLIENT_PILOT: Int32 = 2
+let CLIENT_ALL: Int32 = 3
 let SERVER_SILENT: Int32 = 1
 let SERVER_METAR: Int32 = 2
 let SOURCE_NETWORK: Int32 = 0
@@ -64,7 +65,7 @@ let L_ERR: Int32 = 4
 let PRODUCT: String = "LDP FLY ADS Cangjie BETA"
 let VERSION: String = "LDP FLY ADS 1.0"
 let NEEDREVISION: Int32 = 9
-let MAX_CLIENTS: Int32 = 500
+var MAX_CLIENTS: Int32 = 500
 let MAX_SERVERS: Int32 = 50
 let MAX_HTTP_CONNECTIONS: Int32 = 100
 

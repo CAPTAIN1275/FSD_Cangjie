@@ -19,9 +19,7 @@ public class ServInterface <: NetInterface {
     }
     public override func createUser(socket: TcpSocket): NetUser {
         let u = ServUser(socket, this)
-        this.usersLock.lock()
-        this.users.add(u)
-        this.usersLock.unlock()
+        synchronized(this.usersLock) { this.users.add(u) }
         // 加完用户后再发 feed，确保 assembleAndSend 能找到新连接
         u.sendFeed()
         return u
@@ -45,14 +43,13 @@ public class ServInterface <: NetInterface {
                 sock.connect()
                 dolog(L_INFO, "Connected to server ${hostname}:${port}")
                 let user = createUser(sock)
-                // 用 serve 循环处理远程发来的协议包（NOTIFY、客户端数据等）
+                match (user) { case su: ServUser => su.peerHost = "${hostname}:${port}"; case _ => () }
                 serve(user)
                 dolog(L_WARNING, "Server ${hostname}:${port} disconnected, reconnecting...")
                 try { sock.close() } catch (_: Exception) {}
             } catch (e: Exception) {
                 dolog(L_WARNING, "Server ${hostname}:${port} connect failed: ${e}")
             }
-            // 等待重试
             if (this.runFlag) {
                 sleep(30000 * Duration.millisecond)
             }
@@ -82,8 +79,7 @@ public class ServInterface <: NetInterface {
         let buf = "${client.cid}:${locIdent}:${client.callsign}:${client.`type`}:${client.rating}:${client.protocol}:${client.realname}:0"
         assembleAndSend(dest, CMD_ADDCLIENT, buf, exclude)
         // 本地投递给客户�?
-        if (client.isAtc()) { clientInterface?.sendAddA(client) }
-        else { clientInterface?.sendAddP(client) }
+        // 本地投递由调用方负责（本地登录在 handleAddClient，远端登录在 execCmd），避免重复广播
     }
     public func sendRmClient(dest: String, callsign: String, exclude: ?Server): Unit {
         assembleAndSend(dest, CMD_RMCLIENT, callsign, exclude)
@@ -119,7 +115,20 @@ public class ServInterface <: NetInterface {
         assembleAndSend(destServer, CMD_REQMETAR, "${client}:${metar}:${parsed}:${fd}", None)
     }
     public func sendKill(callsign: String, reason: String): Unit {
-        assembleAndSend("*", CMD_KILL, "${callsign}:${reason}", None)
+        // C 版: who->location==myserver → handlekill, 否则发 CMD_KILL
+        match (getClient(callsign)) {
+            case Some(cl) =>
+                let isLocal = match (cl.location) {
+                    case Some(loc) => loc.ident == (myServer?.ident ?? "")
+                    case None => true
+                }
+                if (isLocal) {
+                    clientInterface?.sendKillClient(cl, reason)
+                } else {
+                    assembleAndSend(cl.location?.ident ?? "*", CMD_KILL, "${callsign}:${reason}", None)
+                }
+            case None => ()
+        }
     }
     public func sendReset(): Unit {
         assembleAndSend("*", CMD_RESET, "", None)
@@ -133,16 +142,14 @@ public class ServInterface <: NetInterface {
         let isBcast = (dest.startsWith("*") || dest.startsWith("@"))
         let bi = if (isBcast) { "B" } else { "U" }
         let line = "${cmdnames[Int64(cmd)]}:${dest}:${myServer?.ident ?? "FSD"}:${bi}${this.packetCount}:0:${data}\r\n"
-        this.usersLock.lock()
-        let _us = ArrayList<NetUser>()
-        for (_ui in 0..this.users.size) { _us.add(this.users[_ui]) }
-        this.usersLock.unlock()
-        for (_ui in 0.._us.size) {
-            let u = _us[_ui]
+        synchronized(this.usersLock) {
+        for (_ui in 0..this.users.size) {
+            let u = this.users[_ui]
             match (u) {
                 case su: ServUser => su.outStr += line
                 case _ => ()
             }
+        }
         }
     }
 
@@ -161,6 +168,7 @@ public class ServInterface <: NetInterface {
 public class ServUser <: NetUser {
     var peerIdent: String = ""
     var peerLag: Int32 = 0
+    var peerHost: String = ""  // C 版 peer:port
     var clientOk: Bool = false
     var startupTime: Int64 = 0
     var iface: ServInterface
@@ -186,11 +194,11 @@ public class ServUser <: NetUser {
         var clientSent = 0
         let _keys = getClientKeys()
         for (_i in 0.._keys.size) {
-            let c = clientMap.get(_keys[_i]).getOrThrow()
+            let c = match (clientMap.get(_keys[_i])) { case Some(x) => x; case None => continue }
             if (clLocal(c)) { this.iface.sendAddClient("*", c, None); clientSent += 1 }
             match (c.plan) { case Some(_) => this.iface.sendPlan("*", c, None); case None => () }
         }
-        dolog(L_INFO, "sendFeed: sent ${clientSent} clients, sent NOTIFY for myServer")
+        dolog(L_DEBUG, "sendFeed: sent ${clientSent} clients")
         // 发送所有证�?
         var cert = rootCert
         while (true) { match (cert) { case Some(c) =>
@@ -285,12 +293,9 @@ public class ServUser <: NetUser {
             }
         }
         // 发送到匹配的服务器连接
-        this.iface.usersLock.lock()
-        let _us = ArrayList<NetUser>()
-        for (_ui in 0..this.iface.users.size) { _us.add(this.iface.users[_ui]) }
-        this.iface.usersLock.unlock()
-        for (_ui in 0.._us.size) {
-            let u = _us[_ui]
+        synchronized(this.iface.usersLock) {
+        for (_ui in 0..this.iface.users.size) {
+            let u = this.iface.users[_ui]
             match (u) {
                 case su: ServUser =>
                     var shouldSend = true
@@ -302,6 +307,7 @@ public class ServUser <: NetUser {
                 case _ => ()
             }
         }
+        }
     }
 
     private func execCmd(cmd: Int32, parts: Array<String>, data: String, fromSvr: ?Server): Bool {
@@ -310,7 +316,7 @@ public class ServUser <: NetUser {
             let ident = parts[6]; let name = parts[7]; let email = parts[8]
             let hostname = parts[9]; let version = parts[10]; let flags = parseInt32(parts[11])
             let location = if (parts.size > 12) { parts[12] } else { "" }
-            dolog(L_INFO, "NOTIFY received: ident=${ident} name=${name} host=${hostname}")
+            dolog(L_DEBUG, "NOTIFY received: ident=${ident} name=${name} host=${hostname}")
             // 更新/添加服务器
             match (getServer(ident)) {
                 case Some(s) =>
@@ -361,7 +367,7 @@ public class ServUser <: NetUser {
             let cid = parts[5]; let locIdent = parts[6]; let callsign = parts[7]
             let type_ = parseInt32(parts[8]); let rating = parseInt32(parts[9])
             let protocol = parseInt32(parts[10]); let realname = parts[11]
-            dolog(L_INFO, "ADDCLIENT: cid=${cid} loc=${locIdent} cs=${callsign} type=${type_}")
+            dolog(L_DEBUG, "ADDCLIENT: cid=${cid} loc=${locIdent} cs=${callsign} type=${type_}")
             match (getClient(callsign)) {
                 case Some(_) => return false
                 case None =>
@@ -370,7 +376,7 @@ public class ServUser <: NetUser {
                         case Some(l) =>
                             let cl = Client(callsign, cid, realname, "", type_, rating, protocol)
                             cl.location = loc; addClient(cl)
-                            dolog(L_INFO, "ADDCLIENT added: ${callsign} at ${l.ident}")
+                            dolog(L_DEBUG, "ADDCLIENT added: ${callsign} at ${l.ident}")
                             if (type_ == CLIENT_ATC) { clientInterface?.sendAddA(cl) }
                             else { clientInterface?.sendAddP(cl) }
                         case None => dolog(L_WARNING, "ADDCLIENT server not found: ${locIdent}")
@@ -409,8 +415,14 @@ public class ServUser <: NetUser {
         if (cmd == CMD_PLAN) {
             if (parts.size < 22) { return false }
             match (getClient(parts[5])) { case Some(c) =>
+                let rev = parseInt32(parts[6])
+                // C 版: revision 去重，不递增则跳过
+                match (c.plan) {
+                    case Some(existing) => if (existing.revision >= rev) { return true }
+                    case None => ()
+                }
                 let fp = FlightPlan()
-                fp.callsign = c.callsign; fp.revision = parseInt32(parts[6])
+                fp.callsign = c.callsign; fp.revision = rev
                 fp.`type` = if (parts[7] != "") { parts[7].toRuneArray()[0] } else { r'I' }
                 fp.aircraft = parts[8]; fp.tascruise = parseInt32(parts[9])
                 fp.depAirport = parts[10]; fp.depTime = parseInt32(parts[11])
@@ -447,8 +459,28 @@ public class ServUser <: NetUser {
         if (cmd == CMD_MULTIC) {
             if (parts.size < 7) { return true }
             let clCmd = parseInt32(parts[5]); let srcCallsign = parts[6]
+            // C 版: 用 sendgeneric 保留原始命令前缀，不走 #TM
+            let destStr = parts[1]  // "%callsign" "@freq" "*" "*A" "*P"
             var msgData = ""; for (i in 7..parts.size) { if (msgData != "") { msgData += ":" }; msgData += parts[i] }
-            clientInterface?.routeMessage(srcCallsign, parts[1], msgData)
+            // 解析目标
+            if (destStr.startsWith("%")) {
+                let targetCs = substrFrom(destStr, 1)
+                match (getClient(targetCs)) {
+                    case Some(cl) =>
+                        // sendgeneric: sprintf(buf,"%s:%s:%s", srcCallsign, targetCs, msgData)
+                        clientInterface?.sendPacket(Some(cl), Some(cl), None, CLIENT_ALL, Int32(-1), clCmd, "${srcCallsign}:${targetCs}:${msgData}")
+                    case None => ()
+                }
+            } else {
+                // 广播目标: *, *A, *P, @freq
+                let broad = if (destStr == "*A") { CLIENT_ATC } else if (destStr == "*P") { CLIENT_PILOT } else { CLIENT_ALL }
+                match (getClient(srcCallsign)) {
+                    case Some(srcCl) =>
+                        clientInterface?.sendPacket(Some(srcCl), None, None, broad, Int32(-1), clCmd, "${srcCallsign}:${destStr}:${msgData}")
+                    case None =>
+                        clientInterface?.sendPacket(None, None, None, broad, Int32(-1), clCmd, "${srcCallsign}:${destStr}:${msgData}")
+                }
+            }
             return true
         }
         if (cmd == CMD_REQMETAR) {
@@ -460,7 +492,7 @@ public class ServUser <: NetUser {
             if (parts.size < 7) { return true }
             match (fromSvr) {
                 case Some(s) =>
-                    dolog(L_INFO, "KILL from ${s.ident}: ${parts[4]} reason=${parts[5]}")
+                    dolog(L_DEBUG, "KILL from ${s.ident}: ${parts[4]} reason=${parts[5]}")
                     match (getClient(parts[5])) { case Some(c) =>
                         clientInterface?.sendKillClient(c, parts[6])
                     ; case None => () }
@@ -472,7 +504,40 @@ public class ServUser <: NetUser {
             match (fromSvr) { case Some(s) => s.packetCount = 0; case None => () }
             return true
         }
-        // WEATHER, METAR, NOWX, ADDWPROF, DELWPROF 暂不实现（依�?MetarManager�?
+        // NOWX:dest:from:bi+pkt:hops:station:fd
+        if (cmd == CMD_NOWX) {
+            if (parts.size < 6) { return true }
+            let station = parts[5]; let fd = if (parts.size > 6) { parseInt32(parts[6]) } else { Int32(-1) }
+            dolog(L_DEBUG, "NOWX from ${fromSvr?.ident ?? "?"}: ${station}")
+            return true
+        }
+        // WX:dest:from:bi+pkt:hops:station:fd:data...
+        if (cmd == CMD_WEATHER) {
+            if (parts.size < 7) { return true }
+            let station = parts[5]
+            dolog(L_DEBUG, "WX from ${fromSvr?.ident ?? "?"}: ${station}")
+            return true
+        }
+        // METAR:dest:from:bi+pkt:hops:station:fd:data
+        if (cmd == CMD_METAR) {
+            if (parts.size < 8) { return true }
+            let station = parts[5]; let data = parts[7]
+            dolog(L_DEBUG, "METAR from ${fromSvr?.ident ?? "?"}: ${station}")
+            match (metarManager) { case Some(mm) => mm.setMetar(station, data); case None => () }
+            return true
+        }
+        // ADDWPROF:dest:from:bi+pkt:hops:name:version:origin:data...
+        if (cmd == CMD_ADDWPROF) {
+            if (parts.size < 7) { return true }
+            dolog(L_DEBUG, "ADDWPROF from ${fromSvr?.ident ?? "?"}: ${parts[5]}")
+            return true
+        }
+        // DELWPROF:dest:from:bi+pkt:hops:name
+        if (cmd == CMD_DELWPROF) {
+            if (parts.size < 6) { return true }
+            dolog(L_DEBUG, "DELWPROF from ${fromSvr?.ident ?? "?"}: ${parts[5]}")
+            return true
+        }
         return true
     }
 

@@ -1,0 +1,16 @@
+[dependencies]
+  mysql = {path = "../"}
+  jlog = {git = "https://gitcode.com/service/jlog.git", branch = "main", version = "0.0.1"}
+
+
+[package]
+  cjc-version = "0.59.6"
+  compile-option = ""
+  description = "nothing here"
+  link-option = ""
+  name = "example"
+  output-type = "executable"
+  src-dir = ""
+  target-dir = ""
+  version = "1.0.0"
+  package-configuration = {}

@@ -1,0 +1,56 @@
+###############################################################################
+# FSD Flight Simulator Server 配置文件（示例）
+# 复制为 fsd.conf 后按需修改；请勿把真实的 fsd.conf 提交到仓库
+###############################################################################
+
+[system]
+clientport=6809
+serverport=3011
+systemport=3010
+ident=FSD
+email=nobody@nowhere.com
+name=FSD Cangjie Server
+hostname=example.com
+# 3010 管理接口密码（务必改掉默认值）
+password=CHANGE_ME_ADMIN_PASSWORD
+location=China
+mode=normal
+certificates=cert.txt
+maxclients=500
+whazzup=whazzup.txt
+# 禁止连飞的航班号（逗号分隔，呼号包含即拒绝）
+blocked_flights=
+
+[database]
+host=localhost
+user=YOUR_DB_USER
+password=YOUR_DB_PASSWORD
+name=YOUR_DB_NAME
+port=3306
+# 自定义表名和字段名（不填则用默认值）
+table_users=useraccount
+col_user_callsign=callsign
+col_user_password=password
+col_user_permission=permission
+table_flightplans=flightplans
+col_fp_callsign=callsign
+col_fp_cid=cid
+col_fp_data=fp_data
+
+[httpapi]
+enabled=false
+port=8080
+key=CHANGE_ME_API_KEY
+
+[trails]
+enabled=false
+
+[connections]
+#connectto=
+#allowfrom=
+
+[weather]
+source=download
+server=weather.noaa.gov
+dir=data/observations/metar/cycles/
+ftpmode=passive

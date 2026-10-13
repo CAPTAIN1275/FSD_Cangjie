@@ -1,5 +1,7 @@
 package FSD_Cangjie
 
+import std.fs.*
+
 main(): Int64 {
     println("==============================================")
     println("FSD v${VERSION}")
@@ -14,6 +16,12 @@ main(): Int64 {
     dolog(L_INFO, "Entering main loop on ports: client=${engine.clientPort}, server=${engine.serverPort}, system=${engine.systemPort}")
 
     while (true) {
+        // 优雅停机：fsd_d.sh 检测到重启时创建 fsd_stop，这里通知所有客户端后退出
+        if (exists("fsd_stop")) {
+            dolog(L_INFO, "Shutdown requested (fsd_stop), graceful shutdown")
+            engine.gracefulShutdown()
+            return 0
+        }
         try {
             engine.run()
         } catch (e: Exception) {

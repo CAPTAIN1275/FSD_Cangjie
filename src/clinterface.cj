@@ -12,6 +12,10 @@ import std.sync.*
 
 var statsLock = Mutex()
 
+// 登录闸门：限制同时在处理的登录数。大规模同时登录时，把 O(N²) 的瞬时分配峰值压平，防 OOM。
+let MAX_CONCURRENT_LOGINS: Int64 = 16
+var loginGate = Semaphore(MAX_CONCURRENT_LOGINS)
+
 public class ClInterface <: NetInterface {
     var allowList: ArrayList<String>
     public init(port: Int32, name: String, description: String) {
@@ -19,9 +23,7 @@ public class ClInterface <: NetInterface {
     }
     public override func createUser(socket: TcpSocket): NetUser {
         let u = ClUser(socket, this)
-        this.usersLock.lock()
-        this.users.add(u)
-        this.usersLock.unlock()
+        synchronized(this.usersLock) { this.users.add(u) }
         return u
     }
     public func allow(ip: String): Unit { this.allowList.add(ip) }
@@ -39,13 +41,22 @@ public class ClInterface <: NetInterface {
     public func sendError(user: ClUser, code: Int32, env: String, callsign: String): Unit {
         let paddedCode = if (code < 10) { "00${code}" } else if (code < 100) { "0${code}" } else { "${code}" }
         let msg = "\$ERserver:${callsign}:${paddedCode}:${env}:${errStr(code)}\r\n"
-        // 先尝试直接写 socket，失败则回退到 outStr 缓冲
-        try { user.socket.write(toBuf(msg)); user.outStr = "" } catch (_: Exception) { user.outStr += msg }
+        sendTo(user, msg)
     }
 
     // #AA 格式: #AAcallsign:SERVER:realname:cid:password:rating:protocol
     // #AP 格式: #APcallsign:SERVER:cid:password:rating:protocol:simtype:realname
     public func handleAddClient(user: ClUser, line: String): Unit {
+        // 登录闸门：限制并发登录数，防止大规模同时登录造成 O(N²) 瞬时分配峰值 OOM
+        loginGate.acquire()
+        try {
+            this.handleAddClientInner(user, line)
+        } finally {
+            loginGate.release()
+        }
+    }
+
+    private func handleAddClientInner(user: ClUser, line: String): Unit {
         let prefix = if (line.startsWith("#AA")) { "#AA" } else { "#AP" }
         let data = substrFrom(line, Int64(prefix.toRuneArray().size))
         let parts = splitStr(data, ":")
@@ -59,10 +70,8 @@ public class ClInterface <: NetInterface {
 
         // 检查是否禁止的航班号
         if (isBlockedFlight(callsign)) {
-            sendError(user, ERR_NOSUCHCS, "", "unknown")
-            let tm = "#TMserver:${callsign}:Accident flight number rejected\r\n"
-            try { user.socket.write(toBuf(tm)) } catch (_: Exception) {}
-            user.shouldClose = true; user.delayClose = false
+            sendTo(user, "#TMserver:${callsign}:Flight number blocked, please change your callsign\r\n")
+            user.shouldClose = true; user.delayClose = true
             return
         }
 
@@ -79,7 +88,8 @@ public class ClInterface <: NetInterface {
             let (verified, actualLevel) = verifyUser(cid, password)
             if (!verified) { sendError(user, ERR_CIDINVALID, cid, "unknown"); user.shouldClose = true; user.delayClose = true; return }
             if (actualLevel <= LEV_SUSPENDED) { sendError(user, ERR_CSSUSPEND, cid, "unknown"); return }
-            if (actualLevel < 2) { sendError(user, ERR_LEVEL, cid, "unknown"); user.shouldClose = true; user.delayClose = true; return }
+            let req = if (rating < 0) { 0i32 } else { rating }
+            if (actualLevel < req) { sendError(user, ERR_LEVEL, callsign, "unknown"); user.shouldClose = true; user.delayClose = true; return }
             // CID 唯一性检查：同一 CID 不能重复登录（仅 OBS 豁免）
             match (getClientByCid(cid)) {
                 case Some(existing) =>
@@ -94,8 +104,7 @@ public class ClInterface <: NetInterface {
             client.location = myServer
             if (!addClient(client)) { sendError(user, ERR_CSINUSE, "", "unknown"); user.shouldClose = true; user.delayClose = true; return }
             user.client = client
-            dolog(L_INFO, "ATC login: ${callsign} level=${actualLevel}")
-            // 发送在线客户端列表给新客户端
+            dolog(L_INFO, "ATC login: ${callsign} level=${actualLevel} ip=${user.peerIp}")
             sendAllClientsTo(user)
         } else {
             // #AP: callsign:SERVER:cid:password:rating:protocol:simtype:realname
@@ -115,6 +124,8 @@ public class ClInterface <: NetInterface {
             let (verified, actualLevel) = verifyUser(cid, password)
             if (!verified) { sendError(user, ERR_CIDINVALID, cid, "unknown"); user.shouldClose = true; user.delayClose = true; return }
             if (actualLevel <= LEV_SUSPENDED) { sendError(user, ERR_CSSUSPEND, cid, "unknown"); return }
+            let reqP = if (rating < 0) { 0i32 } else { rating }
+            if (actualLevel < reqP) { sendError(user, ERR_LEVEL, callsign, "unknown"); user.shouldClose = true; user.delayClose = true; return }
             // CID 唯一性检查：非 OBS 连接才检查
             if (!isObserver) {
                 match (getClientByCid(cid)) {
@@ -131,7 +142,7 @@ public class ClInterface <: NetInterface {
             client.location = myServer; client.simtype = simtype
             if (!addClient(client)) { sendError(user, ERR_CSINUSE, "", "unknown"); user.shouldClose = true; user.delayClose = true; return }
             user.client = client
-            dolog(L_INFO, "${if (isObserver) { "Observer" } else { "Pilot" }} login: ${callsign} level=${actualLevel}")
+            dolog(L_INFO, "${if (isObserver) { "Observer" } else { "Pilot" }} login: ${callsign} level=${actualLevel} ip=${user.peerIp}")
             sendAllClientsTo(user)
         }
 
@@ -202,7 +213,6 @@ public class ClInterface <: NetInterface {
                 match (idx) {
                     case Some(pos) =>
                         let callsign = substrTo(data, pos); let rawData = substrFrom(data, pos + 1)
-                        // 跳过 SERVER:type 两段（原版 array+2）
                         let idx2 = rawData.indexOf(r':')
                         match (idx2) {
                             case Some(pos2) =>
@@ -211,7 +221,17 @@ public class ClInterface <: NetInterface {
                                 match (idx3) {
                                     case Some(pos3) =>
                                         let fpData = substrFrom(afterServer, pos3 + 1)
-                                        let fp = FlightPlan.parse(fpData); fp.callsign = callsign; fp.cid = c.cid; c.plan = fp
+                                        let fp = FlightPlan.parse(fpData); fp.callsign = callsign; fp.cid = c.cid
+                                        // 机组只能改自己的计划
+                                        if (callsign.toUpper() != c.callsign.toUpper()) {
+                                            sendError(user, ERR_LEVEL, callsign, c.callsign); return
+                                        }
+                                        // 若被其他管制锁定则拒绝
+                                        if (c.planLockedBy != "" && c.planLockedBy != c.callsign) {
+                                            sendTo(user, "#TMserver:${c.callsign}:Flight plan locked by ${c.planLockedBy}\r\n")
+                                            return
+                                        }
+                                        c.plan = fp
                                         match (gMysql) { case Some(db) => db.saveFlightPlan(callsign, c.cid, fpData); case None => () }
                                         broadcastToClients("\$FP${callsign}:SERVER:${fp.`type`}:${fp.serialize()}\r\n", None)
                                         serverInterface?.sendPlan("*", c, None)
@@ -220,6 +240,40 @@ public class ClInterface <: NetInterface {
                             case None => ()
                         }
                     case None => ()
+                }
+            case None => sendError(user, ERR_REGISTERED, "Not logged in", "unknown")
+        }
+    }
+
+    // ---- $AM 管制修改机组飞行计划（CL_TAGMOD）----
+    public func handleTagMod(user: ClUser, line: String): Unit {
+        dolog(L_INFO, "TAGMOD: ${line}")
+        match (user.client) {
+            case Some(c) =>
+                // 格式: $AM<source>:SERVER:<target>:<type>:<plan...>
+                let data = substrFrom(line, 3)
+                let parts = splitStr(data, ":")
+                if (parts.size < 18) { return }
+                // parts[2] = target callsign, parts[3] = type, parts[4..] = plan
+                let targetCs = parts[2]
+                if (!c.isAtc() || c.rating < 5) { sendError(user, ERR_LEVEL, targetCs, c.callsign); return }
+                // 重组 plan 数据（parts[4..]，用 : 连接，route 可能含 :）
+                var fpData = ""
+                for (i in 4..parts.size) {
+                    if (fpData != "") { fpData += ":" }
+                    fpData += parts[Int64(i)]
+                }
+                match (getClient(targetCs)) {
+                    case Some(pilot) =>
+                        let fp = FlightPlan.parse(fpData); fp.callsign = targetCs; fp.cid = pilot.cid
+                        pilot.plan = fp
+                        pilot.planLockedBy = c.callsign
+                        dolog(L_INFO, "PLAN: ${c.callsign} modified ${targetCs} plan")
+                        match (gMysql) { case Some(db) => db.saveFlightPlan(targetCs, pilot.cid, fpData); case None => () }
+                        broadcastToClients("\$FP${targetCs}:SERVER:${fp.`type`}:${fp.serialize()}\r\n", None)
+                        serverInterface?.sendPlan("*", pilot, None)
+                    case None =>
+                        sendTo(user, "#TMserver:${c.callsign}:${targetCs} not found\r\n")
                 }
             case None => sendError(user, ERR_REGISTERED, "Not logged in", "unknown")
         }
@@ -279,7 +333,9 @@ public class ClInterface <: NetInterface {
                 replayBuf += "${ts} ${c.callsign} ${c.lat} ${c.lon} ${c.altitude} ${Int64(finalHeading)} ${c.groundspeed}\n"
             }
             replayLock.unlock()
-            broadcastToClients(line + "\r\n", c.callsign)
+            // C 版 sendpacket 范围过滤广播：data 不含 @/% 和 \r\n
+            let cmd: Int32 = if (c.isAtc()) { 8i32 } else { 7i32 }  // CL_ATCPOS=8, CL_PILOTPOS=7
+            sendPacket(Some(c), None, Some(c), CLIENT_ALL, Int32(-1), cmd, data)
         ; case None => () }
     }
 
@@ -289,10 +345,44 @@ public class ClInterface <: NetInterface {
             case Some(c) =>
                 let data = substrFrom(line, 3); let parts = splitStr(data, ":")
                 if (parts.size < 3) { return }
-                if (parts[1] == "RN") {
-                    match (getClient(parts[0])) {
-                        case Some(target) => user.outStr += "\$CR${c.callsign}:${target.callsign}:RN:${target.realname}:USER:${target.rating}\r\n"
+                // C 版: array[1]==target, array[2]==cmd
+                // 格式 $CQ:source:target:cmd... → parts[1]=source, parts[2]=target
+                let source = if (parts[0] == "") { parts[1] } else { parts[0] }
+                let target = if (parts[0] == "") { parts[2] } else { parts[1] }
+                // 非 "server" 目标 → 转发给目标客户端（保持 $CQ 前缀）
+                if (target.toUpper() != "server") {
+                    match (getClient(target)) {
+                        case Some(cl) =>
+                            sendPacket(Some(c), Some(cl), None, CLIENT_ALL, Int32(-1), CL_CQ, data)
                         case None => ()
+                    }
+                    // 如果目标不在本地，通过服务器间路由
+                    serverInterface?.sendMulticast(c.callsign, target, data, CL_CQ)
+                    return
+                }
+                // server 命令: parts = ["", source, "server", cmd, ...]
+                let cmdStr = if (parts[0] == "") { if (parts.size > 3) { parts[3] } else { "" } } else { parts[2] }
+                if (cmdStr.toUpper() == "RN") {
+                    let queryTarget = if (parts[0] == "") { if (parts.size > 4) { parts[4] } else { "" } } else { if (parts.size > 3) { parts[3] } else { "" } }
+                    if (queryTarget != "") {
+                        match (getClient(queryTarget)) {
+                            case Some(targetCl) =>
+                                user.outStr += "\$CR${c.callsign}:${targetCl.callsign}:RN:${targetCl.realname}:USER:${targetCl.rating}\r\n"
+                            case None => ()
+                        }
+                    }
+                } else if (cmdStr.toUpper() == "FP") {
+                    let queryTarget = if (parts[0] == "") { if (parts.size > 4) { parts[4] } else { "" } } else { if (parts.size > 3) { parts[3] } else { "" } }
+                    if (queryTarget != "") {
+                        match (getClient(queryTarget)) {
+                            case Some(targetCl) =>
+                                match (targetCl.plan) {
+                                    case Some(fp) =>
+                                        user.outStr += "\$FP${queryTarget}:SERVER:${fp.`type`}:${fp.serialize()}\r\n"
+                                    case None => sendError(user, ERR_NOFP, queryTarget, c.callsign)
+                                }
+                            case None => sendError(user, ERR_NOSUCHCS, queryTarget, c.callsign)
+                        }
                     }
                 }
             case None => sendError(user, ERR_REGISTERED, "Not logged in", "unknown")
@@ -345,12 +435,22 @@ public class ClInterface <: NetInterface {
         }
     }
 
-    // ---- #PC 坐标协议 ----
+    // ---- #PC 管制协调协议（C 版 execmulticast，只发给目标）----
     public func handlePilotCommand(user: ClUser, line: String): Unit {
         match (user.client) {
             case Some(c) =>
-                // 广播给同频率管制员
-                routeMessage(c.callsign, "*", line)
+                // #PCsource:target:data... → parts[1] = target
+                let data = substrFrom(line, 3)
+                let parts = splitStr(data, ":")
+                if (parts.size >= 2) {
+                    let target = parts[1]
+                    match (getClient(target)) {
+                        case Some(cl) =>
+                            sendPacket(Some(c), Some(cl), None, CLIENT_ALL, Int32(-1), CL_PC, data)
+                        case None => ()
+                    }
+                    // multiok=0，不转发服务器间
+                }
             case None => ()
         }
     }
@@ -369,8 +469,35 @@ public class ClInterface <: NetInterface {
     public func handleAcars(user: ClUser, line: String): Unit {
         match (user.client) {
             case Some(c) =>
-                let dest = if (line.size > 3) { splitStr(substrFrom(line, 3), ":")[0] } else { "*" }
-                routeMessage(c.callsign, dest, line)
+                let data = substrFrom(line, 3)
+                let parts = splitStr(data, ":")
+                if (parts.size >= 2) {
+                    let source = parts[0]
+                    if (source.toUpper() != c.callsign.toUpper()) { sendError(user, ERR_SRCINVALID, source, c.callsign); return }
+                    if (parts.size >= 4 && parts[2].toUpper() == "METAR") {
+                        match (metarManager) {
+                            case Some(mm) => mm.requestMetar("%${c.callsign}", parts[3], 0, Int32(-1))
+                            case None => ()
+                        }
+                        return
+                    }
+                    routeMessage(c.callsign, parts[1], line)
+                }
+            case None => ()
+        }
+    }
+
+    // ---- $CR 查询回复（C 版 execmulticast，转发给目标）----
+    public func handleCr(user: ClUser, line: String): Unit {
+        match (user.client) {
+            case Some(c) =>
+                let data = substrFrom(line, 3)
+                let parts = splitStr(data, ":")
+                // $CRsource:target:cmd:data
+                if (parts.size >= 2) {
+                    sendPacket(Some(c), None, None, CLIENT_ALL, Int32(-1), CL_CR, data)
+                    // 不转发到其他服务器（multiok=0）
+                }
             case None => ()
         }
     }
@@ -379,127 +506,163 @@ public class ClInterface <: NetInterface {
     public func handleKill(user: ClUser, line: String): Unit {
         match (user.client) {
             case Some(c) =>
-                if (c.rating < LEV_SUP_ADMIN) { user.outStr += "#TMserver:${c.callsign}:Permission denied\r\n"; return }
-                let parts = splitStr(substrFrom(line, 3), ":")
-                if (parts.size < 1) { return }
-                let cmd = parts[0]
-                if (cmd == "WALLOP") {
-                    if (parts.size < 2) { return }
-                    var msg = ""; for (i in 1..parts.size) { if (msg != "") { msg += ":" }; msg += parts[i] }
-                    broadcastToClients("#TMserver:*:${msg}\r\n", None)
-                } else if (cmd == "SUP") {
-                    if (parts.size < 2) { return }
-                    match (getClient(parts[1])) {
-                        case Some(t) => t.rating = LEV_SUP_ADMIN; user.outStr += "#TMserver:${c.callsign}:${parts[1]} 已提升为 SUPERVISOR\r\n"
-                        case None => user.outStr += "#TMserver:${c.callsign}:找不到客户端 ${parts[1]}\r\n"
-                    }
-                } else if (cmd == "ADMIN") {
-                    if (c.rating < LEV_ADMIN) { user.outStr += "#TMserver:${c.callsign}:需要 ADMIN 权限\r\n"; return }
-                    if (parts.size < 2) { return }
-                    match (getClient(parts[1])) {
-                        case Some(t) => t.rating = LEV_ADMIN; user.outStr += "#TMserver:${c.callsign}:${parts[1]} 已提升为 ADMIN\r\n"
-                        case None => user.outStr += "#TMserver:${c.callsign}:找不到客户端 ${parts[1]}\r\n"
-                    }
-                } else if (cmd == "ALLOW") {
-                    if (parts.size < 2) { return }
-                    let minRating = parseInt32(parts[1])
-                    // 存储最小允许等级（在全局变量或配置中）
-                    user.outStr += "#TMserver:${c.callsign}:最低连接等级已设为 ${minRating}\r\n"
-                } else if (cmd == "DENY") {
-                    if (parts.size < 2) { return }
-                    match (getClient(parts[1])) {
-                        case Some(t) => serverInterface?.sendKill(t.callsign, "Denied by admin"); sendKillClient(t, "Denied by admin"); user.outStr += "#TMserver:${c.callsign}:已拒绝 ${parts[1]}\r\n"
-                        case None => user.outStr += "#TMserver:${c.callsign}:找不到客户端 ${parts[1]}\r\n"
-                    }
-                } else if (cmd == "GUARD") {
-                    user.outStr += "#TMserver:${c.callsign}:Guard 功能未实现\r\n"
-                } else if (cmd == "STATS") {
-                    match (user.client) {
-                        case Some(me) =>
-                            let now = mgmtime()
-                            let durationMin = (now - me.startTime) / 60
-                            let durationStr = if (durationMin >= 60) { "${durationMin / 60}小时${durationMin % 60}分钟" } else { "${durationMin}分钟" }
-                            user.outStr += "#TMserver:${c.callsign}:--- 连线统计 ---\r\n"
-                            user.outStr += "#TMserver:${c.callsign}:呼号: ${me.callsign} (CID:${me.cid})\r\n"
-                            user.outStr += "#TMserver:${c.callsign}:本次连线时长: ${durationStr}\r\n"
-                            // 从数据库查飞行时长和管制时长（单位：小时，支持小数）
-                            var flightHours: Float64 = 0.0; var controlHours: Float64 = 0.0
-                            match (gMysql) {
-                                case Some(db) =>
-                                    if (db.isConnected()) {
-                                        (flightHours, controlHours) = db.getUserHours(me.cid)
-                                    }
-                                case None => ()
-                            }
-                            if (flightHours > 0.0) {
-                                let fh = formatFloat(flightHours)
-                                user.outStr += "#TMserver:${c.callsign}:飞行时长: ${fh}小时\r\n"
-                            }
-                            if (controlHours > 0.0) {
-                                let ch = formatFloat(controlHours)
-                                user.outStr += "#TMserver:${c.callsign}:管制时长: ${ch}小时\r\n"
-                            }
-                            // 在线用户数（排除 OBS）
-                            var pilotCount = 0; var atcCount = 0; var obsCount = 0
-                            let _keys = getClientKeys()
-                            for (_i in 0.._keys.size) {
-                                let cl = clientMap.get(_keys[_i]).getOrThrow()
-                                let csLen = Int64(cl.callsign.toRuneArray().size)
-                                let isObs = (csLen > 4 && substrFrom(cl.callsign, csLen - 4) == "_OBS")
-                                if (isObs) { obsCount += 1 }
-                                else if (cl.isAtc()) { atcCount += 1 }
-                                else { pilotCount += 1 }
-                            }
-                            user.outStr += "#TMserver:${c.callsign}:在线: ${pilotCount} 机组 / ${atcCount} 管制 / ${obsCount} OBS\r\n"
-                        case None => ()
-                    }
-                } else {
-                    // 原 kill 逻辑
-                    if (parts.size >= 2) { match (getClient(parts[0])) { case Some(t) => serverInterface?.sendKill(t.callsign, parts[1]); sendKillClient(t, parts[1]); case None => () } }
+                let after = substrFrom(line, 3)
+                let parts = splitStr(after, ":")
+                if (parts.size < 3) { return }
+                match (getClient(parts[1])) {
+                    case Some(cl) =>
+                        if (c.rating >= 11) {
+                            dolog(L_INFO, "KILL: ${c.callsign} -> ${cl.callsign} (reason=${parts[2]})")
+                            broadcastToClients("#TMserver:${c.callsign}:Attempting to kill ${cl.callsign}\r\n", None)
+                            serverInterface?.sendKill(cl.callsign, parts[2])
+                        } else {
+                            user.outStr += "#TMserver:${c.callsign}:You are not allowed to kill users!\r\n"
+                        }
+                    case None => broadcastToClients("#TMserver:${c.callsign}:Could not find ${parts[1]}\r\n", None)
+                }
+            case None => ()
+        }
+    }
+
+    // ---- $PI/$PO 客户端 Ping/Pong（C 版 execmulticast 转发给目标）----
+    public func handlePing(user: ClUser, line: String): Unit {
+        match (user.client) {
+            case Some(c) =>
+                let data = substrFrom(line, 3)
+                let parts = splitStr(data, ":")
+                if (parts.size >= 2) {
+                    sendPacket(Some(c), None, None, CLIENT_ALL, Int32(-1), CL_PING, data)
+                    serverInterface?.sendMulticast(c.callsign, parts[1], data, CL_PING)
+                }
+            case None => ()
+        }
+    }
+    public func handlePong(user: ClUser, line: String): Unit {
+        match (user.client) {
+            case Some(c) =>
+                let data = substrFrom(line, 3)
+                let parts = splitStr(data, ":")
+                if (parts.size >= 2) {
+                    sendPacket(Some(c), None, None, CLIENT_ALL, Int32(-1), CL_PONG, data)
+                    serverInterface?.sendMulticast(c.callsign, parts[1], data, CL_PONG)
+                }
+            case None => ()
+        }
+    }
+
+    // ---- #RW 天气请求 ----
+    public func handleWeatherRequest(user: ClUser, line: String): Unit {
+        match (user.client) {
+            case Some(c) =>
+                let data = substrFrom(line, 3)
+                let parts = splitStr(data, ":")
+                if (parts.size >= 2) {
+                    let target = parts[1]
+                    sendPacket(None, None, None, CLIENT_ATC, Int32(-1), CL_REQWEATHER, data)
+                    serverInterface?.sendMulticast(c.callsign, target, data, CL_REQWEATHER)
                 }
             case None => ()
         }
     }
 
     // ---- 广播 ----
+    // C 版 calcrange: 计算两个客户端之间的可见范围（NM）
+    private func calcRange(from: Client, to: Client, cmd: Int32, range: Int32): Int32 {
+        // CL_PILOTPOS=7, CL_ATCPOS=8
+        if (cmd == 7 || cmd == 8) {
+            if (to.isAtc()) { return to.visualrange }
+            let x = to.getrange(); let y = from.getrange()
+            if (from.isPilot()) { return x + y }
+            return if (x > y) { x } else { y }
+        }
+        // CL_MESSAGE=5
+        if (cmd == 5) {
+            let x = to.getrange(); let y = from.getrange()
+            if (from.isPilot() && to.isPilot()) { return x + y }
+            return if (x > y) { x } else { y }
+        }
+        return range
+    }
+
+    // C 版 sendpacket: 按范围过滤广播
+    public func sendPacket(source: ?Client, dest: ?Client, exclude: ?Client,
+                           broad: Int32, range: Int32, cmd: Int32, data: String): Unit {
+        let line = "${clcmdnames(cmd)}${data}\r\n"
+        let lineBytes = line.toArray()
+        synchronized(this.usersLock) {
+        for (_ui in 0..this.users.size) {
+            let u = this.users[_ui]
+            match (u) { case cu: ClUser => match (cu.client) {
+                case Some(cl) =>
+                    if (let Some(ex) <- exclude) { if (cl.callsign == ex.callsign) { continue } }
+                    if (let Some(d) <- dest) { if (cl.callsign != d.callsign) { continue } }
+                    if ((cl.`type` & broad) == 0) { continue }
+                    if (let Some(s) <- source) {
+                        if (range != -1 || cmd == 7 || cmd == 8) {
+                            let cr = calcRange(s, cl, cmd, range)
+                            let dist = s.distanceNM(cl)
+                            if (dist < 0.0 || dist > Float64(cr)) { continue }
+                        }
+                    }
+                    sendBytesTo(cu, lineBytes)
+                case None => ()
+            }; case _ => () }
+        }
+        }
+    }
+
+    private func clcmdnames(cmd: Int32): String {
+        // clcmdnames array from C: #AA #DA #AP #DP $HO #TM #RW @ % $PI $PO $HA $FP #SB #PC #WX #CD #WD #TD $C? $CI $AX $AR $ER $CQ $CR $!!
+        let names = ["#AA", "#DA", "#AP", "#DP", "\$HO", "#TM", "#RW", "@", "%",
+                     "\$PI", "\$PO", "\$HA", "\$FP", "#SB", "#PC", "#WX",
+                     "#CD", "#WD", "#TD", "\$C?", "\$CI", "\$AX", "\$AR", "\$ER",
+                     "\$CQ", "\$CR", "\$!!"]
+         if (cmd >= 0 && Int64(cmd) < names.size) { return names[Int64(cmd)] }
+        return ""
+    }
+
     public func broadcastToClients(data: String, exclude: ?String): Unit {
-        this.usersLock.lock()
-        let _us = ArrayList<NetUser>()
-        for (_ui in 0..this.users.size) { _us.add(this.users[_ui]) }
-        this.usersLock.unlock()
-        for (_ui in 0.._us.size) {
-            let u = _us[_ui]
+        let bytes = data.toArray()
+        synchronized(this.usersLock) {
+        for (_ui in 0..this.users.size) {
+            let u = this.users[_ui]
             match (u) { case cu: ClUser =>
                 if (let Some(c) <- cu.client) {
                     match (exclude) { case Some(cs) => if (c.callsign == cs) { continue }; case None => () }
-                    sendTo(cu, data)
+                    sendBytesTo(cu, bytes)
                 }
             ; case _ => () }
+        }
         }
     }
 
     public func sendAllClientsTo(user: ClUser): Unit {
+        let sb = StringBuilder()
         let _keys = getClientKeys()
         for (_i in 0.._keys.size) {
-            let c = clientMap.get(_keys[_i]).getOrThrow()
-            match (user.client) {
-                case Some(myC) =>
-                    if (c.callsign != myC.callsign) {
-                        user.outStr += buildAddClientLine(c)
-                        // 同步飞行计划
-                        match (c.plan) { case Some(fp) => user.outStr += "\$FP${c.callsign}:SERVER:${fp.`type`}:${fp.serialize()}\r\n"; case None => () }
-                        // 同步ATC频率/位置（即使频率为0也发，客户端自行解析）
-                        if (c.isAtc()) {
-                            user.outStr += "%${c.callsign}:${c.frequency}:${c.facilitytype}:${c.visualrange}:${c.rating}:${c.lat}:${c.lon}:${c.altitude}\r\n"
+            if (let Some(c) <- clientMap.get(_keys[_i])) {
+                match (user.client) {
+                    case Some(myC) =>
+                        if (c.callsign != myC.callsign) {
+                            sb.append(buildAddClientLine(c))
+                            if (let Some(fp) <- c.plan) {
+                                sb.append("\$FP${c.callsign}:SERVER:${fp.`type`}:${fp.serialize()}\r\n")
+                            }
+                            // 同步ATC频率/位置（即使频率为0也发，客户端自行解析）
+                            if (c.isAtc()) {
+                                sb.append("%${c.callsign}:${c.frequency}:${c.facilitytype}:${c.visualrange}:${c.rating}:${c.lat}:${c.lon}:${c.altitude}\r\n")
+                            }
                         }
-                    }
-                case None => ()
+                    case None => ()
+                }
             }
         }
+        sendTo(user, sb.toString())
     }
 
     public func routeMessage(from: String, target: String, msg: String): Unit {
         let line = "#TM${from}:${target}:${msg}\r\n"
+        let lineBytes = line.toArray()
         // 解析 @ 频率目标
         let targetFreq: Int32 = if (target.startsWith("@") && target.toRuneArray().size > 1) {
             let freqStr = substrFrom(target, 1)
@@ -513,12 +676,9 @@ public class ClInterface <: NetInterface {
                 case None => parseInt32(freqStr) * 1000
             }
         } else { 0 }
-        this.usersLock.lock()
-        let _us = ArrayList<NetUser>()
-        for (_ui in 0..this.users.size) { _us.add(this.users[_ui]) }
-        this.usersLock.unlock()
-        for (_ui in 0.._us.size) {
-            let u = _us[_ui]
+        synchronized(this.usersLock) {
+        for (_ui in 0..this.users.size) {
+            let u = this.users[_ui]
             match (u) { case cu: ClUser => match (cu.client) {
                 case Some(c) =>
                     var deliver = false
@@ -535,9 +695,10 @@ public class ClInterface <: NetInterface {
                         }
                     }
                     else { deliver = (c.callsign == target) }
-                    if (deliver) { sendTo(cu, line) }
+                    if (deliver) { sendBytesTo(cu, lineBytes) }
                 case None => ()
             }; case _ => () }
+        }
         }
     }
 
@@ -563,7 +724,6 @@ public class ClInterface <: NetInterface {
         out.add(UInt8(58))  // :
         for (i in (sep2 + 1)..bytes.size) { out.add(bytes[i]) }  // body
         out.add(UInt8(13)); out.add(UInt8(10))  // \r\n
-        let outArr = out.toArray()
 
         // 目标以 @ 开头 = 频率广播，转发给同频率的客户端
         var isFreqBcast = false
@@ -572,12 +732,10 @@ public class ClInterface <: NetInterface {
         }
 
         // 分发到所有匹配的客户端
-        this.usersLock.lock()
-        let _us = ArrayList<NetUser>()
-        for (_ui in 0..this.users.size) { _us.add(this.users[_ui]) }
-        this.usersLock.unlock()
-        for (_ui in 0.._us.size) {
-            let u = _us[_ui]
+        let outBytes = out.toArray()
+        synchronized(this.usersLock) {
+        for (_ui in 0..this.users.size) {
+            let u = this.users[_ui]
             match (u) { case cu: ClUser => match (cu.client) {
                 case Some(c) =>
                     if (c.callsign == fromCallsign) { continue }
@@ -592,34 +750,60 @@ public class ClInterface <: NetInterface {
                         deliver = (c.callsign == targetCs)
                     }
                     if (deliver) {
-                        try { cu.socket.write(outArr) } catch (_: Exception) {}
+                        sendBytesTo(cu, outBytes)
                     }
                 case None => ()
             }; case _ => () }
         }
+        }
     }
 
     public func sendAddA(client: Client): Unit {
-        // 原版格式：#AAcallsign:SERVER:realname:cid::rating:protocol
-        broadcastToClients("#AA${client.callsign}:SERVER:${client.realname}:${client.cid}::${client.rating}:${client.protocol}\r\n", None)
+        broadcastToClients("#AA${client.callsign}:SERVER:${client.realname}:${client.cid}::${client.rating}:${client.protocol}\r\n", client.callsign)
     }
     public func sendAddP(client: Client): Unit {
-        // 原版格式：#APcallsign:SERVER:cid::rating:protocol:simtype
-        broadcastToClients("#AP${client.callsign}:SERVER:${client.cid}::${client.rating}:${client.protocol}:${client.simtype}\r\n", None)
+        broadcastToClients("#AP${client.callsign}:SERVER:${client.cid}::${client.rating}:${client.protocol}:${client.simtype}\r\n", client.callsign)
     }
     public func sendRemoveClient(client: Client): Unit {
         let prefix = if (client.isAtc()) { "#DA" } else { "#DP" }
         broadcastToClients("${prefix}${client.callsign}:${client.cid}\r\n", None)
     }
     public func sendKillClient(client: Client, reason: String): Unit {
-        broadcastToClients("\$!!SERVER:${client.callsign}:${reason}\r\n", None)
-        this.usersLock.lock()
-        let _us = ArrayList<NetUser>()
-        for (_ui in 0..this.users.size) { _us.add(this.users[_ui]) }
-        this.usersLock.unlock()
-        for (_ui in 0.._us.size) {
-            let u = _us[_ui]
-            match (u) { case cu: ClUser => if (let Some(c) <- cu.client) { if (c.callsign == client.callsign) { cu.socket.close() } }; case _ => () }
+        let msg = "\$!!SERVER:${client.callsign}:${reason}\r\n"
+        dolog(L_INFO, "KILL NOTIFY: ${msg.trim()}")
+        broadcastToClients(msg, None)
+        // 不发 #DP/#DA——让客户端自行从 $!!SERVER 处理移除
+        removeClient(client)
+        serverInterface?.sendRmClient("*", client.callsign, None)
+        // sendTo 已直写 socket，无需手动 flush
+        synchronized(this.usersLock) {
+            for (j in 0..this.users.size) {
+                match (this.users[Int64(j)]) {
+                    case cu: ClUser => match (cu.client) {
+                        case Some(c) => if (c.callsign == client.callsign) {
+                            cu.shouldClose = true; cu.outStr.close()   // 先冲刷 $!! 再关闭
+                        }
+                        case None => ()
+                    }; case _ => ()
+                }
+            }
+        }
+    }
+
+    // 停机：给每个在线客户端单独发 $!!（客户端识别后会自行离开），并优雅关闭连接
+    public func notifyAllShutdown(reason: String): Unit {
+        synchronized(this.usersLock) {
+            for (j in 0..this.users.size) {
+                match (this.users[Int64(j)]) {
+                    case cu: ClUser => match (cu.client) {
+                        case Some(c) =>
+                            sendTo(cu, "\$!!SERVER:${c.callsign}:${reason}\r\n")
+                            cu.shouldClose = true
+                            cu.outStr.close()
+                        case None => ()
+                    }; case _ => ()
+                }
+            }
         }
     }
 
@@ -634,21 +818,17 @@ public class ClInterface <: NetInterface {
         match (client.plan) { case Some(fp) => broadcastToClients("\$FP${client.callsign}:SERVER:${fp.`type`}:${fp.serialize()}\r\n", None); case None => () }
     }
     public func broadcastToAll(data: String): Unit {
-        this.usersLock.lock()
-        let _us = ArrayList<NetUser>()
-        for (_ui in 0..this.users.size) { _us.add(this.users[_ui]) }
-        this.usersLock.unlock()
-        for (_ui in 0.._us.size) { _us[_ui].outStr += data }
+        let bytes = data.toArray()
+        synchronized(this.usersLock) {
+        for (_ui in 0..this.users.size) { sendBytesTo(this.users[_ui], bytes) }
+        }
     }
 
     public func broadcastWeatherProfile(wp: WeatherProfile): Unit {
-        let wx = wp.toWxMessage("server") + "\r\n"
-        let cd = wp.toCdMessage() + "\r\n"
-        this.usersLock.lock()
-        let _us = ArrayList<NetUser>()
-        for (_ui in 0..this.users.size) { _us.add(this.users[_ui]) }
-        this.usersLock.unlock()
-        for (_ui in 0.._us.size) { _us[_ui].outStr += wx + cd }
+        let bytes = (wp.toWxMessage("server") + "\r\n" + wp.toCdMessage() + "\r\n").toArray()
+        synchronized(this.usersLock) {
+        for (_ui in 0..this.users.size) { sendBytesTo(this.users[_ui], bytes) }
+        }
     }
 
     private func buildAddClientLine(c: Client): String {
@@ -691,102 +871,105 @@ public class ClUser <: NetUser {
             case Some(c) =>
                 let durationMin = (mgmtime() - c.startTime) / 60
                 let ctype = if (c.isAtc()) { "ATC" } else { "PILOT" }
-                dolog(L_INFO, "CLIENT DISCONNECT: ${c.callsign} (CID:${c.cid}) type=${ctype} duration=${durationMin}min")
+                dolog(L_INFO, "CLIENT DISCONNECT: ${c.callsign} (CID:${c.cid}) type=${ctype} duration=${durationMin}min ip=${this.peerIp}")
+                // 先清理注册表：DB 统计可能阻塞或抛异常，不能让它把用户永久卡在在线列表
+                serverInterface?.sendRmClient("*", c.callsign, None); removeClient(c); this.iface.sendRemoveClient(c); fsdEngine?.markWhazzupDirty()
+                // 管制断线：解锁其锁定的飞行计划
+                if (c.isAtc()) { unlockPlansBy(c.callsign) }
                 // 保存连线时长到数据库（区分飞行员/管制员，OBS 不计入）
                 let csLen = Int64(c.callsign.toRuneArray().size)
                 let isObs = (csLen > 4 && substrFrom(c.callsign, csLen - 4) == "_OBS")
                 if (!isObs && durationMin > 0) {
-                    match (gMysql) {
-                        case Some(db) =>
-                            if (db.isConnected()) {
-                                if (!db.saveOnlineTime(c.cid, ctype, durationMin)) {
-                                    dolog(L_WARNING, "DB stats failed for ${c.callsign}, fallback to file")
-                                    _saveStatsToFile(c.cid, c.callsign, ctype, durationMin)
-                                }
-                            } else { _saveStatsToFile(c.cid, c.callsign, ctype, durationMin) }
-                        case None => _saveStatsToFile(c.cid, c.callsign, ctype, durationMin)
+                    if (!(gMysql?.saveOnlineTime(c.cid, ctype, durationMin) ?? false)) {
+                        dolog(L_WARNING, "DB stats failed for ${c.callsign}, fallback to file")
+                        _saveStatsToFile(c.cid, c.callsign, ctype, durationMin)
                     }
                 }
-                serverInterface?.sendRmClient("*", c.callsign, None); removeClient(c); this.iface.sendRemoveClient(c); fsdEngine?.writeWhazzUp()
+                // 断线清除轨迹（放最后，避免阻塞前面的清理）
+                if (c.isPilot()) { gMysql?.deleteFlightTrails(c.callsign) }
             case None => ()
         }
         if (this.delayClose) {
             sleep(200 * Duration.millisecond)  // 给 TCP 时间刷新数据到客户端
         }
-        this.socket.close()
-        // 从用户列表移除自己，防止内存泄漏
-        this.iface.usersLock.lock()
-        var found: ?Int64 = None
-        for (idx in 0..this.iface.users.size) {
-            match (this.iface.users[Int64(idx)]) {
-                case cu: ClUser =>
-                    match (cu.client) {
-                        case Some(c) =>
-                            match (this.client) {
-                                case Some(myc) => if (c.callsign == myc.callsign) { found = Int64(idx); break }
-                                case None => ()
-                            }
-                        case None => ()
-                    }
-                case _ => ()
-            }
-        }
-        match (found) {
-            case Some(idx) => this.iface.users.remove(idx..(idx+1))
-            case None => ()
-        }
-        this.iface.usersLock.unlock()
+        this.outStr.close()
+        // 连接从 users 列表的移除由 NetInterface.serve 统一按 id 处理
+        // （原先按 callsign 匹配只覆盖已登录用户，未登录连接会永久泄漏）
     }
     public override func handleLine(line: String): Unit {
-        let trimmed = line.trim()
-        if (trimmed == "") { return }
-        if (trimmed.startsWith("#AA") || trimmed.startsWith("#AP")) { this.iface.handleAddClient(this, trimmed) }
-        // #TM 由 handleRawLine 处理（原始字节透传），String 路径跳过
-        else if (trimmed.startsWith("\$FP")) { this.iface.handleFlightPlan(this, trimmed) }
-        else if (trimmed.startsWith("@") || trimmed.startsWith("%")) { this.iface.handlePosition(this, trimmed) }
-        else if (trimmed.startsWith("\$CQ")) { this.iface.handleCq(this, trimmed) }
-        else if (trimmed.startsWith("#WX")) { this.iface.handleWeather(this, trimmed) }
-        else if (trimmed.startsWith("\$HO")) { this.iface.handleHandoff(this, trimmed) }
-        else if (trimmed.startsWith("\$HA")) { this.iface.handleHandoffAccept(this, trimmed) }
-        else if (trimmed.startsWith("\$C?")) { this.iface.handleCommsRequest(this, trimmed) }
-        else if (trimmed.startsWith("\$CI")) { this.iface.handleCommsReply(this, trimmed) }
-        else if (trimmed.startsWith("#PC")) { this.iface.handlePilotCommand(this, trimmed) }
-        else if (trimmed.startsWith("#CD") || trimmed.startsWith("#WD") || trimmed.startsWith("#TD") || trimmed.startsWith("#DL")) { this.iface.handleWeatherData(this, trimmed) }
-        else if (trimmed.startsWith("\$AX")) { this.iface.handleAcars(this, trimmed) }
-        else if (trimmed.startsWith("\$!!")) { this.iface.handleKill(this, trimmed) }
-        else if (trimmed.startsWith("#DA") || trimmed.startsWith("#DP")) {
-            if (let Some(c) <- this.client) {
-                // 保存统计（在清空 client 之前）
-                let durationMin = (mgmtime() - c.startTime) / 60
-                let ctype = if (c.isAtc()) { "ATC" } else { "PILOT" }
-                dolog(L_INFO, "CLIENT DISCONNECT: ${c.callsign} (CID:${c.cid}) type=${ctype} duration=${durationMin}min")
-                let csLen = Int64(c.callsign.toRuneArray().size)
-                let isObs = (csLen > 4 && substrFrom(c.callsign, csLen - 4) == "_OBS")
-                if (!isObs && durationMin > 0) {
-                    match (gMysql) {
-                        case Some(db) =>
-                            if (db.isConnected()) {
-                                if (!db.saveOnlineTime(c.cid, ctype, durationMin)) {
-                                    dolog(L_WARNING, "DB stats failed for ${c.callsign}, fallback to file")
-                                    _saveStatsToFile(c.cid, c.callsign, ctype, durationMin)
-                                }
-                            } else { _saveStatsToFile(c.cid, c.callsign, ctype, durationMin) }
-                        case None => _saveStatsToFile(c.cid, c.callsign, ctype, durationMin)
+        let trimmed = line.trimAscii()
+        if (trimmed.isEmpty()) { return }
+        // 按首字节分组，减少重复 startsWith 比较
+        let c0 = trimmed[0]
+        if (c0 == UInt8(35)) {          // '#'
+            if (trimmed.startsWith("#AA") || trimmed.startsWith("#AP")) { this.iface.handleAddClient(this, trimmed) }
+            else if (trimmed.startsWith("#WX")) { this.iface.handleWeather(this, trimmed) }
+            else if (trimmed.startsWith("#RW")) { this.iface.handleWeatherRequest(this, trimmed) }
+            else if (trimmed.startsWith("#PC")) { this.iface.handlePilotCommand(this, trimmed) }
+            else if (trimmed.startsWith("#CD") || trimmed.startsWith("#WD") || trimmed.startsWith("#TD") || trimmed.startsWith("#DL")) { this.iface.handleWeatherData(this, trimmed) }
+            else if (trimmed.startsWith("#DA") || trimmed.startsWith("#DP")) {
+                // C 版: #DA(ATC下线)/#DP(机组下线) 都是通知自己离线的，不踢人
+                // 踢人通过 $!!target:reason (handleKill)
+                if (let Some(c) <- this.client) {
+                    let durationMin = (mgmtime() - c.startTime) / 60
+                    let ctype = if (c.isAtc()) { "ATC" } else { "PILOT" }
+                    dolog(L_INFO, "CLIENT DISCONNECT: ${c.callsign} (CID:${c.cid}) type=${ctype} duration=${durationMin}min ip=${this.peerIp}")
+                    // 先清理注册表，再做 DB 统计（DB 可能阻塞/异常，不能卡住在在线列表）
+                    this.iface.sendRemoveClient(c)
+                    serverInterface?.sendRmClient("*", c.callsign, None)
+                    removeClient(c)
+                    fsdEngine?.markWhazzupDirty()
+                    if (c.isAtc()) { unlockPlansBy(c.callsign) }
+                    let csLen = Int64(c.callsign.toRuneArray().size)
+                    let isObs = (csLen > 4 && substrFrom(c.callsign, csLen - 4) == "_OBS")
+                    if (!isObs && durationMin > 0) {
+                        if (!(gMysql?.saveOnlineTime(c.cid, ctype, durationMin) ?? false)) {
+                            dolog(L_WARNING, "DB stats failed for ${c.callsign}, fallback to file")
+                            _saveStatsToFile(c.cid, c.callsign, ctype, durationMin)
+                        }
                     }
+                    if (c.isPilot()) { gMysql?.deleteFlightTrails(c.callsign) }
                 }
-                this.iface.sendRemoveClient(c)
-                serverInterface?.sendRmClient("*", c.callsign, None)
-                removeClient(c)
-                fsdEngine?.writeWhazzUp()
+                this.client = None
+                this.shouldClose = true
+                this.outStr.close()
             }
-            this.client = None
-            this.socket.close()
+        } else if (c0 == UInt8(36)) {   // '$'
+            if (trimmed.startsWith("\$FP")) { this.iface.handleFlightPlan(this, trimmed) }
+            else if (trimmed.startsWith("\$AM")) { this.iface.handleTagMod(this, trimmed) }
+            else if (trimmed.startsWith("\$CQ")) { this.iface.handleCq(this, trimmed) }
+            else if (trimmed.startsWith("\$PI")) { this.iface.handlePing(this, trimmed) }
+            else if (trimmed.startsWith("\$PO")) { this.iface.handlePong(this, trimmed) }
+            else if (trimmed.startsWith("\$HO")) { this.iface.handleHandoff(this, trimmed) }
+            else if (trimmed.startsWith("\$HA")) { this.iface.handleHandoffAccept(this, trimmed) }
+            else if (trimmed.startsWith("\$C?")) { this.iface.handleCommsRequest(this, trimmed) }
+            else if (trimmed.startsWith("\$CI")) { this.iface.handleCommsReply(this, trimmed) }
+            else if (trimmed.startsWith("\$AX")) { this.iface.handleAcars(this, trimmed) }
+            else if (trimmed.startsWith("\$CR")) { this.iface.handleCr(this, trimmed) }
+            else if (trimmed.startsWith("\$!!")) { this.iface.handleKill(this, trimmed) }
+        } else if (c0 == UInt8(64) || c0 == UInt8(37)) {   // '@' 或 '%'
+            this.iface.handlePosition(this, trimmed)
         }
     }
     // 原始字节处理（非 UTF-8 编码，如 GBK 中文）
     public override func handleRawLine(bytes: ArrayList<UInt8>): Unit {
         this.iface.handleRawTextMessage(this, bytes)
     }
+}
+
+// 管制断线时解锁其锁定的所有飞行计划
+func unlockPlansBy(controllerCallsign: String): Unit {
+    let _keys = getClientKeys()
+    var unlocked = 0
+    for (_i in 0.._keys.size) {
+        if (let Some(c) <- clientMap.get(_keys[_i])) {
+            if (c.planLockedBy == controllerCallsign) {
+                c.planLockedBy = ""
+                unlocked += 1
+            }
+        }
+    }
+    if (unlocked > 0) { dolog(L_INFO, "Unlocked ${unlocked} flight plans by ${controllerCallsign}") }
 }
 
 // 检查呼号是否包含禁止的航班号
@@ -810,9 +993,7 @@ func _saveStatsToFile(cid: String, callsign: String, ctype: String, durationMin:
     statsLock.lock()
     try {
         let line = "${cid}:${callsign}:${mgmtime()}:${ctype}:${durationMin}\n"
-        var content = line
-        try { content = String.fromUtf8(File.readFrom(Path("stats.txt"))) + line } catch (e: Exception) {}
-        File.writeTo(Path("stats.txt"), content.toArray())
+        File.appendTo(Path("stats.txt"), line.toArray())
         dolog(L_INFO, "Stats file fallback: ${callsign} ${durationMin}min")
     } catch (e: Exception) {
         dolog(L_ERR, "Stats file error: ${e}")

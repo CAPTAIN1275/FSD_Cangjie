@@ -23,7 +23,17 @@ let CMD_PLAN: Int32 = 9; let CMD_PD: Int32 = 10; let CMD_AD: Int32 = 11
 let CMD_CERT: Int32 = 12; let CMD_MULTIC: Int32 = 13; let CMD_WEATHER: Int32 = 14
 let CMD_METAR: Int32 = 15; let CMD_ADDWPROF: Int32 = 16; let CMD_DELWPROF: Int32 = 17
 let CMD_KILL: Int32 = 18; let CMD_RESET: Int32 = 19
-let CL_MESSAGE: Int32 = 20  // 客户端消息（用于 sendMulticast）
+
+// 客户端协议命令编号（clcmdnames 顺序）
+let CL_ADDATC: Int32 = 0; let CL_RMATC: Int32 = 1; let CL_ADDPILOT: Int32 = 2
+let CL_RMPILOT: Int32 = 3; let CL_REQHANDOFF: Int32 = 4; let CL_MESSAGE: Int32 = 5
+let CL_REQWEATHER: Int32 = 6; let CL_PILOTPOS: Int32 = 7; let CL_ATCPOS: Int32 = 8
+let CL_PING: Int32 = 9; let CL_PONG: Int32 = 10; let CL_ACHANDOFF: Int32 = 11
+let CL_PLAN: Int32 = 12; let CL_SB: Int32 = 13; let CL_PC: Int32 = 14
+let CL_WEATHER: Int32 = 15; let CL_CLOUDDATA: Int32 = 16; let CL_WINDDATA: Int32 = 17
+let CL_TEMPDATA: Int32 = 18; let CL_REQCOM: Int32 = 19; let CL_REPCOM: Int32 = 20
+let CL_REQACARS: Int32 = 21; let CL_REPACARS: Int32 = 22; let CL_ERROR: Int32 = 23
+let CL_CQ: Int32 = 24; let CL_CR: Int32 = 25; let CL_KILL: Int32 = 26; let CL_WDELTA: Int32 = 27
 
 let CERT_ADD: Int32 = 0; let CERT_DELETE: Int32 = 1; let CERT_MODIFY: Int32 = 2
 

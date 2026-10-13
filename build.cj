@@ -16,17 +16,6 @@ main(): Int64 {
     }
 
     // windows
-    let winDir = Path("windows")
-    if (!exists(winDir)) { Directory.create(winDir) }
-    for (f in configFiles) {
-        let src = Path(f); let dst = winDir.join(f)
-        if (exists(src)) { copy(src, to: dst, overwrite: true) }
-    }
-    let exeWin = Path("target/release/bin/main")
-    if (exists(exeWin)) {
-        copy(exeWin, to: winDir.join("FSD_Cangjie.exe"), overwrite: true)
-    }
-
     println("[FSD Build] Done!")
     return 0
 }
