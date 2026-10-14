@@ -56,8 +56,30 @@ func isValidCallsign(cs: String): Bool {
     return true
 }
 
-func sprintGmt(_t: Int64): String { return DateTime.now().format("yyyyMMddHHmmss") }
-func sprintGmtDate(_t: Int64): String { return DateTime.now().format("yyyyMMdd") }
+func _isLeapYear(y: Int64): Bool { return (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0) }
+func _pad2(n: Int64): String { return if (n < 10) { "0${n}" } else { "${n}" } }
+
+// 由 Unix 秒（本地口径，与 mgmtime 一致）反推 yyyyMMddHHmmss
+func sprintGmt(t: Int64): String {
+    var days = t / 86400
+    var rem = t % 86400
+    if (rem < 0) { rem += 86400; days -= 1 }
+    let hh = rem / 3600
+    let mm = (rem % 3600) / 60
+    let ss = rem % 60
+    var y = 1970
+    while (true) {
+        let dy = if (_isLeapYear(y)) { 366 } else { 365 }
+        if (days < dy) { break }
+        days -= dy; y += 1
+    }
+    let mdays: Array<Int64> = if (_isLeapYear(y)) { [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] } else { [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] }
+    var mo = 0
+    while (days >= mdays[mo]) { days -= mdays[mo]; mo += 1 }
+    let dd = days + 1
+    return "${y}${_pad2(mo + 1)}${_pad2(dd)}${_pad2(hh)}${_pad2(mm)}${_pad2(ss)}"
+}
+func sprintGmtDate(t: Int64): String { return substr(sprintGmt(t), 0, 8) }
 
 func sqrtApprox(x: Float64): Float64 {
     if (x <= 0.0) { return 0.0 }

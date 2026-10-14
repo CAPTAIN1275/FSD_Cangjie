@@ -375,7 +375,7 @@ public class ServUser <: NetUser {
                     let loc = getServer(locIdent)
                     match (loc) {
                         case Some(l) =>
-                            let cl = Client(callsign, cid, realname, "", type_, rating, protocol)
+                            let cl = Client(callsign, cid, realname, type_, rating, protocol)
                             cl.location = loc; addClient(cl)
                             dolog(L_DEBUG, "ADDCLIENT added: ${callsign} at ${l.ident}")
                             if (type_ == CLIENT_ATC) { clientInterface?.sendAddA(cl) }

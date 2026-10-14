@@ -10,7 +10,7 @@ var cidIndex = ConcurrentHashMap<String, String>()
 
 public class Client {
     var callsign: String; var cid: String; var realname: String
-    var password: String; var `type`: Int32; var rating: Int32; var protocol: Int32
+    var `type`: Int32; var rating: Int32; var protocol: Int32
     var lat: Float64; var lon: Float64; var altitude: Int32; var groundspeed: Int32
     var pbh: UInt32; var transponder: Int32; var frequency: Int32
     var facilitytype: Int32; var visualrange: Int32
@@ -21,10 +21,10 @@ public class Client {
     var location: ?Server; var plan: ?FlightPlan
     var planLockedBy: String
 
-    public init(callsign: String, cid: String, realname: String, password: String,
+    public init(callsign: String, cid: String, realname: String,
                 _type: Int32, rating: Int32, protocol: Int32) {
         this.callsign = callsign; this.cid = cid; this.realname = realname
-        this.password = password; this.`type` = _type; this.rating = rating
+        this.`type` = _type; this.rating = rating
         this.protocol = protocol; this.lat = 0.0; this.lon = 0.0
         this.altitude = 0; this.groundspeed = 0; this.pbh = 0
         this.transponder = 0; this.frequency = 0; this.facilitytype = 0

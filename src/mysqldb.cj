@@ -11,9 +11,13 @@ func bcryptVerify(pwd: String, hash: String): Bool {
     if (!hash.startsWith("\$2")) { return pwd == hash }
     // 直接调 PHP 验证 bcrypt（参数传 argv 避免注入）
     try {
+        // 密码/散列改走环境变量，避免出现在进程 argv（ps 可见）
+        let env = HashMap<String, String>()
+        env["FSD_PW"] = pwd
+        env["FSD_H"] = hash
         let (code, stdoutBytes, _) = executeWithOutput("php", ["-r",
-            "echo password_verify(\$argv[1], \$argv[2]) ? '1' : '0';",
-            "--", pwd, hash])
+            "echo password_verify(getenv('FSD_PW'), getenv('FSD_H')) ? '1' : '0';"],
+            environment: env)
         if (code == 0) {
             let result = String.fromUtf8(stdoutBytes).trim()
             return result == "1"

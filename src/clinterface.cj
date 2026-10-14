@@ -101,7 +101,7 @@ public class ClInterface <: NetInterface {
                     }
                 case None => ()
             }
-            let client = Client(callsign, cid, realname, password, CLIENT_ATC, actualLevel, protocol)
+            let client = Client(callsign, cid, realname, CLIENT_ATC, actualLevel, protocol)
             client.location = myServer
             if (!addClient(client)) { sendError(user, ERR_CSINUSE, "", "unknown"); user.shouldClose = true; user.delayClose = true; return }
             user.client = client
@@ -139,7 +139,7 @@ public class ClInterface <: NetInterface {
                     case None => ()
                 }
             }
-            let client = Client(callsign, cid, realname, password, CLIENT_PILOT, actualLevel, protocol)
+            let client = Client(callsign, cid, realname, CLIENT_PILOT, actualLevel, protocol)
             client.location = myServer; client.simtype = simtype
             if (!addClient(client)) { sendError(user, ERR_CSINUSE, "", "unknown"); user.shouldClose = true; user.delayClose = true; return }
             user.client = client
