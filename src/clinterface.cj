@@ -32,10 +32,9 @@ public class ClInterface <: NetInterface {
         return this.allowList.contains(ip)
     }
     public override func checkPeer(socket: TcpSocket): Bool {
-        // TODO: Cangjie 1.2.0+ 支持 TcpSocket.remoteAddress 后启用
-        // if (this.allowList.size == 0) { return true }
-        // match (socket.remoteAddress) { ... }
-        return true
+        // IP 白名单：allowList 为空则允许所有；否则只允许列表内 IP
+        if (this.allowList.size == 0) { return true }
+        return this.allowList.contains(peerIp(socket))
     }
 
     public func sendError(user: ClUser, code: Int32, env: String, callsign: String): Unit {
@@ -65,6 +64,8 @@ public class ClInterface <: NetInterface {
         let callsign = parts[0].toUpper()  // 统一大写
         // 字段长度限制
         if (callsign.toRuneArray().size > Int64(CALLSIGNBYTES)) { sendError(user, ERR_CSINVALID, "", "unknown"); user.shouldClose = true; user.delayClose = true; return }
+        // 呼号字符白名单：仅允许 A-Z 0-9 _ -（防协议/边界注入）
+        if (!isValidCallsign(callsign)) { sendError(user, ERR_CSINVALID, "", "unknown"); user.shouldClose = true; user.delayClose = true; return }
         if (parts.size < 7) { sendError(user, ERR_SYNTAX, callsign, callsign); return }
         if (parts[2].toRuneArray().size > 64 || parts[3].toRuneArray().size > 64 || parts[4].toRuneArray().size > 128) { sendError(user, ERR_SYNTAX, callsign, callsign); user.shouldClose = true; user.delayClose = true; return }
 

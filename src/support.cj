@@ -29,14 +29,32 @@ func dolog(level: Int32, msg: String): Unit {
     synchronized(logLock) { print(line + "\n", flush: true) }
 }
 
+// 年基偏移缓存：mgmtime 被高频调用，年基(年数+闰年天数)只在跨年时重算一次
+var _mtYear: Int64 = -1
+var _mtBase: Int64 = 0
 func mgmtime(): Int64 {
     let now = DateTime.now()
-    let y = now.year
-    // 计算从 1970 到 y-1 之间的闰年数量
-    let leapYears = ((y - 1) / 4 - (y - 1) / 100 + (y - 1) / 400) - (1969 / 4 - 1969 / 100 + 1969 / 400)
-    return (Int64(y) - 1970) * 31536000 + Int64(leapYears) * 86400 + Int64(now.dayOfYear - 1) * 86400 + Int64(now.hour) * 3600 + Int64(now.minute) * 60 + Int64(now.second)
+    let y = Int64(now.year)
+    if (y != _mtYear) {
+        _mtYear = y
+        // 计算从 1970 到 y-1 之间的闰年数量
+        let leapYears = ((y - 1) / 4 - (y - 1) / 100 + (y - 1) / 400) - (1969 / 4 - 1969 / 100 + 1969 / 400)
+        _mtBase = (y - 1970) * 31536000 + leapYears * 86400
+    }
+    return _mtBase + Int64(now.dayOfYear - 1) * 86400 + Int64(now.hour) * 3600 + Int64(now.minute) * 60 + Int64(now.second)
 }
 func mtime(): Int64 { return mgmtime() }
+
+// 呼号合法性：仅允许 A-Z 0-9 _ -，长度 2..CALLSIGNBYTES（防协议/边界注入）
+func isValidCallsign(cs: String): Bool {
+    let rs = cs.toRuneArray()
+    if (rs.size < 2 || rs.size > Int64(CALLSIGNBYTES)) { return false }
+    for (r in rs) {
+        let ok = (r >= r'A' && r <= r'Z') || (r >= r'0' && r <= r'9') || r == r'_' || r == r'-'
+        if (!ok) { return false }
+    }
+    return true
+}
 
 func sprintGmt(_t: Int64): String { return DateTime.now().format("yyyyMMddHHmmss") }
 func sprintGmtDate(_t: Int64): String { return DateTime.now().format("yyyyMMdd") }

@@ -25,8 +25,9 @@ public class ServInterface <: NetInterface {
         return u
     }
     public override func checkPeer(socket: TcpSocket): Bool {
-        // TODO: Cangjie 1.2.0+ 支持 TcpSocket.remoteAddress 后启用
-        return true
+        // IP 白名单：allowList 为空则允许所有；否则只允许列表内 IP
+        if (this.allowList.size == 0) { return true }
+        return this.allowList.contains(peerIp(socket))
     }
 
     // ---- 主动连接（自动重连）----

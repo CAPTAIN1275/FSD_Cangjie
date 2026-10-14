@@ -22,6 +22,15 @@ func sendRawTo(user: NetUser, data: ArrayList<UInt8>): Unit {
 
 func toBuf(s: String): Array<UInt8> { return s.toArray() }
 
+// 从 remoteAddress（形如 "1.2.3.4:port"）取 IP 部分，用于白名单比对
+func peerIp(socket: TcpSocket): String {
+    let a = "${socket.remoteAddress}"
+    match (a.indexOf(r':')) {
+        case Some(i) => return substrTo(a, i)
+        case None => return a
+    }
+}
+
 // 每用户输出邮箱：线程安全的字节累积缓冲 + 支持 outStr += 运算符。
 // 设计对齐 C 原版 absuser::outbuf：所有 sendTo/广播只把字节**累积**进缓冲，
 // 绝不阻塞在慢客户端的 socket.write 上；专属 userWriter 线程每次把当前累积的
